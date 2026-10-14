@@ -9,7 +9,7 @@
 ![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20macOS%20%7C%20Linux-informational?style=flat-square)
 ![Single file](https://img.shields.io/badge/source-one%20main.lua-success?style=flat-square)
 
-![Zombie Rush gameplay](./docs/screeenshots/hero.png)
+![Zombie Rush gameplay](./docs/screenshots/hero.png)
 
 </div>
 
