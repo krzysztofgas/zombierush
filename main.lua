@@ -1,85 +1,26 @@
-local floor, ceil, min, max = math.floor, math.ceil, math.min, math.max
-local sin, cos, sqrt, abs, pi = math.sin, math.cos, math.sqrt, math.abs, math.pi
+local lg, lm, lf, lw = love.graphics, love.math, love.filesystem, love.window
+local floor, ceil, min, max, abs, sqrt = math.floor, math.ceil, math.min, math.max, math.abs, math.sqrt
+local sin, cos, pi, huge = math.sin, math.cos, math.pi, math.huge
 local atan2 = math.atan2 or math.atan
-local sort = table.sort
+local concat, format = table.concat, string.format
+local TAU = pi * 2
 
-local VW, VH = 320, 240
-local ROAD = { left = 88, right = 232, bottom = 188 }
-local BOX = { x = 20, y = 190, w = 216, h = 50 }
-local SLOT_SIZE = 26
-local START_MONEY = 50
-local MAX_LIFE = 10
-local ROLL_TIME = 0.9
-local FLASH_TIME = 0.09
-local MAX_PARTICLES = 320
-local MAX_FLOATERS = 32
-local POOL_LIMIT = 256
-local BOUNTY = 5
-local TURN_SPEED = 12
-
-local COLOR = {
-  white = { 255, 255, 255 },
-  black = { 0, 0, 0 },
-  gold = { 255, 208, 64 },
-  red = { 228, 64, 56 },
-  green = { 108, 208, 92 },
-  gray = { 176, 176, 186 },
-  dim = { 112, 112, 124 },
-  slot = { 200, 172, 114 },
-  slotHover = { 216, 188, 128 },
-  slotEdge = { 150, 120, 76 },
-  hilite = { 255, 240, 150 },
-  panel = { 20, 22, 26 },
-  panelEdge = { 44, 28, 16 },
-  plate = { 72, 46, 24 },
-  plateLight = { 150, 102, 56 },
-  burn = { 78, 46, 22 },
-  hpGood = { 96, 200, 80 },
-  hpBad = { 200, 48, 48 },
-}
-
-local BLOOD = { { 170, 24, 24 }, { 210, 40, 36 }, { 120, 16, 18 } }
-local BRASS = { 236, 190, 70 }
-
-local THEME = {
-  green = { face = { 88, 170, 72 }, hover = { 116, 204, 92 }, light = { 170, 236, 140 }, dark = { 44, 98, 40 }, text = { 16, 40, 12 } },
-  gold = { face = { 226, 178, 44 }, hover = { 252, 206, 72 }, light = { 255, 240, 150 }, dark = { 140, 100, 20 }, text = { 52, 32, 4 } },
-  red = { face = { 196, 60, 50 }, hover = { 228, 86, 70 }, light = { 255, 150, 130 }, dark = { 110, 28, 24 }, text = { 255, 240, 230 } },
-}
-local DISABLED = { face = { 96, 92, 88 }, light = { 128, 124, 120 }, dark = { 60, 58, 56 }, text = { 150, 146, 140 } }
-
-local WAVE = {
-  count = function(n) return 5 + (n - 1) * 4 end,
-  interval = function(n) return max(0.28, 1.5 - 0.1 * n) end,
-  health = function(n) return 3 + floor((n - 1) / 3) end,
-  speed = function(n) return min(34, 14 + n * 1.2) end,
-  bonus = function(n) return 10 + n * 5 end,
-}
-
-local WEAPONS = {
-  glock = {
-    id = "glock",
-    name = "GLOCK",
-    sprite = "glock",
-    cost = 25,
-    weight = 1,
-    damage = 1,
-    cooldown = 0.38,
-    range = 180,
-    bulletSpeed = 340,
-    muzzle = 9,
-    recoil = 3,
-    kick = 0.35,
-    spread = 0.04,
-  },
-}
-local WEAPON_LIST = { WEAPONS.glock }
-
-local Assets = { sprites = {}, glyphs = {}, flashes = {}, owned = {} }
-local view = { x = 0, y = 0, scale = 3 }
-local canvas, ui, game
-local fatalError
-local windowFocused = true
+local VW, MIN_VH, PANEL_H, TOP_H = 384, 256, 60, 14
+local WORLD_W, WORLD_H = 384, 470
+local ROAD_L, ROAD_R = 120, 264
+local ROAD_C = (ROAD_L + ROAD_R) / 2
+local BANK = 22
+local BARRICADE_Y = 436
+local SLOT_ROWS, SLOT_TOP, SLOT_GAP, SLOT_R = 10, 34, 40, 13
+local SLOT_X = { 66, 318 }
+local MAX_VH = WORLD_H + PANEL_H
+local START_MONEY, KILL_REWARD, MAX_LIFE, MAX_LEVEL, SELL_RATE = 50, 1, 20, 3, 0.5
+local ROLL_TIME, FLASH_TIME, DECAL_LIFE = 1.1, 0.08, 45
+local FIXED_DT, MAX_STEPS = 1 / 60, 8
+local MAX_ZOMBIES, MAX_BULLETS, MAX_PARTICLES, MAX_DECALS, MAX_FLOATERS = 400, 600, 700, 220, 48
+local POOL_LIMIT, BUCKET = 512, 32
+local SAVE_RUN, SAVE_META, SAVE_VERSION, MAX_SAVE_BYTES = "run.dat", "meta.dat", 2, 65536
+local SCROLL_SPEED = 260
 
 local function clamp(v, lo, hi)
   if v < lo then return lo end
@@ -91,197 +32,363 @@ local function snap(v)
   return floor(v + 0.5)
 end
 
-local function angleDiff(from, to)
-  return (to - from + pi) % (2 * pi) - pi
+local function angleDiff(a, b)
+  return (b - a + pi) % TAU - pi
 end
 
-local function rnd()
-  return love.math.random()
+local function rnd(a, b)
+  return a + (b - a) * lm.random()
 end
 
 local function rndInt(a, b)
-  return love.math.random(a, b)
+  return lm.random(a, b)
 end
 
-local function rndRange(a, b)
-  return a + (b - a) * love.math.random()
+local function rgb(r, g, b)
+  return { r / 255, g / 255, b / 255 }
 end
 
-local function removeAt(list, i)
+local function setColor(c, a)
+  lg.setColor(c[1], c[2], c[3], a or 1)
+end
+
+local function swapRemove(list, i)
   local n = #list
   list[i] = list[n]
   list[n] = nil
 end
 
 local function removeValue(list, value)
-  for i = 1, #list do
+  for i = #list, 1, -1 do
     if list[i] == value then
-      removeAt(list, i)
+      swapRemove(list, i)
       return true
     end
   end
   return false
 end
 
-local function setColor(c, a)
-  love.graphics.setColor(c[1] / 255, c[2] / 255, c[3] / 255, a or 1)
+local function int(n)
+  return format("%.0f", n)
 end
 
-local function newPool(factory)
-  local free = {}
-  return {
-    acquire = function()
-      local n = #free
-      if n > 0 then
-        local item = free[n]
-        free[n] = nil
-        return item
-      end
-      return factory()
-    end,
-    release = function(item)
-      if #free < POOL_LIMIT then free[#free + 1] = item end
-    end,
-  }
+local function num(v, lo, hi, default)
+  local n = tonumber(v)
+  if not n or n ~= n or n == huge or n == -huge then return default end
+  return clamp(floor(n), lo, hi)
 end
 
-local function releaseAll(list, pool)
-  for i = #list, 1, -1 do
-    pool.release(list[i])
-    list[i] = nil
+local function checksum(s)
+  local h = 5381
+  for i = 1, #s do
+    h = (h * 33 + s:byte(i)) % 2147483647
   end
+  return h
 end
 
-local function labelMaker(prefix, suffix)
-  local memo, count = {}, 0
-  return function(value)
-    local text = memo[value]
-    if not text then
-      if count >= 512 then
-        memo, count = {}, 0
-      end
-      text = prefix .. value .. (suffix or "")
-      memo[value] = text
+local function newPool(limit)
+  local free, count = {}, 0
+  local pool = {}
+  function pool.get()
+    if count > 0 then
+      local item = free[count]
+      free[count] = nil
+      count = count - 1
+      return item
+    end
+    return {}
+  end
+  function pool.put(item)
+    if count < limit then
       count = count + 1
+      free[count] = item
     end
-    return text
   end
+  function pool.clear()
+    for i = count, 1, -1 do free[i] = nil end
+    count = 0
+  end
+  return pool
 end
 
-local moneyLabel = labelMaker("$")
-local waveLabel = labelMaker("WAVE ")
-local lifeLabel = labelMaker("HP ", "/" .. MAX_LIFE)
-local zombieLabel = labelMaker("ZOMBIES ")
-local clearedLabel = labelMaker("WAVES CLEARED ")
-local bannerLabel = labelMaker("WAVE ")
-local bonusLabel = labelMaker("+$")
-
-local bulletPool = newPool(function() return {} end)
-local particlePool = newPool(function() return {} end)
-
-local function track(resource)
-  Assets.owned[#Assets.owned + 1] = resource
-  return resource
-end
-
-local function buildSprite(rows, palette)
-  local h = #rows
-  if h == 0 then return nil, "empty sprite" end
-  local w = #rows[1]
-  local data = love.image.newImageData(w, h)
-  for y = 1, h do
-    local row = rows[y]
-    if #row ~= w then
-      data:release()
-      return nil, "sprite row " .. y .. " has width " .. #row .. ", expected " .. w
-    end
-    for x = 1, w do
-      local ch = row:sub(x, x)
-      local c = palette[ch]
-      if c then
-        data:setPixel(x - 1, y - 1, c[1] / 255, c[2] / 255, c[3] / 255, (c[4] or 255) / 255)
-      elseif ch ~= "." then
-        data:release()
-        return nil, "unknown palette key '" .. ch .. "'"
+local function labeler(prefix, suffix)
+  local memo, n = {}, 0
+  suffix = suffix or ""
+  return function(v)
+    local s = memo[v]
+    if not s then
+      if n >= 256 then
+        memo, n = {}, 0
       end
+      s = prefix .. tostring(v) .. suffix
+      memo[v] = s
+      n = n + 1
     end
+    return s
   end
-  local image = love.graphics.newImage(data)
-  image:setFilter("nearest", "nearest")
-  data:release()
-  track(image)
-  return { image = image, w = w, h = h }
+end
+
+local L = {
+  money = labeler("$"),
+  plus = labeler("+$"),
+  wave = labeler("WAVE "),
+  num = labeler(""),
+  left = labeler("", " LEFT"),
+  upgrade = labeler("UPGRADE $"),
+  sell = labeler("SELL +$"),
+  reached = labeler("REACHED WAVE "),
+  best = labeler("BEST WAVE "),
+  kills = labeler("KILLS "),
+  total = labeler("TOTAL KILLS "),
+  cleared = labeler("WAVE ", " CLEARED"),
+  level = labeler("LV"),
+  levelUp = labeler("LEVEL ", "!"),
+  hurt = labeler("-", " HP"),
+}
+
+local zombiePool, bulletPool = newPool(POOL_LIMIT), newPool(POOL_LIMIT)
+local particlePool, floaterPool = newPool(POOL_LIMIT), newPool(64)
+
+local C = {
+  white = rgb(255, 255, 255), black = rgb(0, 0, 0), cream = rgb(246, 232, 196),
+  gold = rgb(255, 208, 64), red = rgb(236, 72, 60), green = rgb(118, 220, 100),
+  gray = rgb(180, 180, 190), dim = rgb(112, 112, 124),
+  panel = rgb(14, 16, 20), panelEdge = rgb(36, 24, 14),
+  ground = rgb(46, 34, 24), groundHi = rgb(98, 72, 46), groundLo = rgb(24, 16, 10),
+  plate = rgb(62, 40, 22), plateHi = rgb(140, 96, 52), plateLo = rgb(30, 18, 10),
+  burn = rgb(66, 38, 16), hudBg = rgb(16, 14, 18), hudEdge = rgb(70, 52, 34),
+  hp = rgb(220, 56, 46), hpHi = rgb(255, 128, 104), hpBack = rgb(54, 18, 20),
+  prog = rgb(170, 44, 38), progBack = rgb(38, 18, 18),
+  ring = rgb(255, 238, 150), letterbox = rgb(10, 9, 12),
+  mapSand = rgb(176, 146, 98), mapRoad = rgb(70, 70, 78), barHp = rgb(96, 204, 80), barBack = rgb(120, 30, 30),
+}
+local BLOOD = { rgb(178, 24, 26), rgb(214, 42, 36), rgb(120, 14, 18) }
+local DUST = { rgb(214, 186, 130), rgb(190, 160, 108), rgb(234, 212, 162) }
+local WOOD = { rgb(178, 122, 68), rgb(124, 82, 44), rgb(220, 170, 108) }
+local SPARK = { rgb(255, 236, 140), rgb(255, 200, 70), rgb(255, 255, 220) }
+local BRASS = rgb(236, 190, 70)
+local GLOW = rgb(255, 170, 60)
+
+local THEME = {
+  green = { face = rgb(84, 168, 70), hover = rgb(112, 200, 90), light = rgb(170, 236, 140), dark = rgb(40, 92, 36), text = rgb(14, 38, 10) },
+  gold = { face = rgb(224, 176, 42), hover = rgb(250, 204, 70), light = rgb(255, 240, 150), dark = rgb(136, 96, 18), text = rgb(50, 30, 4) },
+  red = { face = rgb(194, 58, 48), hover = rgb(226, 84, 68), light = rgb(255, 150, 128), dark = rgb(104, 26, 22), text = rgb(255, 242, 232) },
+  steel = { face = rgb(92, 98, 112), hover = rgb(118, 126, 142), light = rgb(170, 178, 194), dark = rgb(46, 50, 60), text = rgb(236, 240, 248) },
+}
+local DISABLED = { face = rgb(80, 76, 72), light = rgb(112, 108, 102), dark = rgb(50, 48, 46), text = rgb(140, 136, 128) }
+DISABLED.hover = DISABLED.face
+
+local RARITY = {
+  { name = "COMMON", color = rgb(196, 196, 206) },
+  { name = "UNCOMMON", color = rgb(118, 220, 100) },
+  { name = "RARE", color = rgb(96, 166, 255) },
+  { name = "EPIC", color = rgb(224, 116, 255) },
+}
+
+local WEAPONS = {
+  { id = "glock", name = "GLOCK", sprite = "glock", cost = 25, weight = 55, rarity = 1, damage = 1, cooldown = 0.42, range = 150, speed = 340, pellets = 1, spread = 0.04, pierce = 1, recoil = 2, kick = 0.3, muzzle = 8, pivotX = 4, pivotY = 3 },
+  { id = "uzi", name = "UZI", sprite = "uzi", cost = 60, weight = 27, rarity = 2, damage = 0.7, cooldown = 0.11, range = 130, speed = 360, pellets = 1, spread = 0.13, pierce = 1, recoil = 1, kick = 0.1, muzzle = 8, pivotX = 5, pivotY = 3 },
+  { id = "shotgun", name = "SHOTGUN", sprite = "shotgun", cost = 90, weight = 13, rarity = 3, damage = 1, cooldown = 0.95, range = 105, speed = 320, pellets = 6, spread = 0.3, pierce = 1, recoil = 4, kick = 0.45, muzzle = 12, pivotX = 6, pivotY = 2 },
+  { id = "rifle", name = "RIFLE", sprite = "rifle", cost = 150, weight = 5, rarity = 4, damage = 7, cooldown = 1.35, range = 270, speed = 560, pellets = 1, spread = 0.004, pierce = 3, recoil = 4, kick = 0.22, muzzle = 14, pivotX = 8, pivotY = 3 },
+}
+local WEAPON_BY_ID = {}
+for i = 1, #WEAPONS do
+  WEAPONS[i].index = i
+  WEAPON_BY_ID[WEAPONS[i].id] = WEAPONS[i]
+end
+
+local ZTYPES = {
+  walker = { a = "walkerA", b = "walkerB", shadow = "shadowS", hp = 1, speed = 1, damage = 1, sway = 1, w = 12, h = 16, hitW = 5, hitH = 7 },
+  runner = { a = "runnerA", b = "runnerB", shadow = "shadowS", hp = 0.6, speed = 1.75, damage = 1, sway = 0.5, w = 12, h = 16, hitW = 5, hitH = 7 },
+  brute = { a = "bruteA", b = "bruteB", shadow = "shadowL", hp = 3.5, speed = 0.6, damage = 3, sway = 0.4, w = 16, h = 18, hitW = 7, hitH = 8 },
+}
+
+local function waveCount(n) return 6 + (n - 1) * 3 end
+local function waveInterval(n) return max(0.25, 1.5 - n * 0.07) end
+local function waveHp(n) return 2 + n * 0.6 end
+local function waveSpeed(n) return min(42, 15 + n * 1.1) end
+local function waveBonus(n) return 15 + n * 5 end
+
+local function pickZombieType(n)
+  local r = lm.random()
+  local brute = 0
+  if n >= 5 then brute = min(0.22, 0.03 * (n - 4)) * ((n % 5 == 0) and 2 or 1) end
+  local runner = n >= 3 and min(0.35, 0.05 * (n - 2)) or 0
+  if r < brute then return ZTYPES.brute end
+  if r < brute + runner then return ZTYPES.runner end
+  return ZTYPES.walker
+end
+
+local function pickWeapon()
+  local total = 0
+  for i = 1, #WEAPONS do total = total + WEAPONS[i].weight end
+  local roll = lm.random() * total
+  for i = 1, #WEAPONS do
+    roll = roll - WEAPONS[i].weight
+    if roll <= 0 then return WEAPONS[i] end
+  end
+  return WEAPONS[#WEAPONS]
 end
 
 local function g(...)
-  return table.concat({ ... })
+  return concat({ ... })
 end
 
 local GLYPHS = {
   [" "] = g("000", "000", "000", "000", "000"),
-  A = g("010", "101", "111", "101", "101"),
-  B = g("110", "101", "110", "101", "110"),
-  C = g("011", "100", "100", "100", "011"),
-  D = g("110", "101", "101", "101", "110"),
-  E = g("111", "100", "110", "100", "111"),
-  F = g("111", "100", "110", "100", "100"),
-  G = g("011", "100", "101", "101", "011"),
-  H = g("101", "101", "111", "101", "101"),
-  I = g("111", "010", "010", "010", "111"),
-  J = g("001", "001", "001", "101", "010"),
-  K = g("101", "101", "110", "101", "101"),
-  L = g("100", "100", "100", "100", "111"),
-  M = g("101", "111", "111", "101", "101"),
-  N = g("110", "101", "101", "101", "101"),
-  O = g("010", "101", "101", "101", "010"),
-  P = g("110", "101", "110", "100", "100"),
-  Q = g("010", "101", "101", "111", "011"),
-  R = g("110", "101", "110", "101", "101"),
-  S = g("011", "100", "010", "001", "110"),
-  T = g("111", "010", "010", "010", "010"),
-  U = g("101", "101", "101", "101", "111"),
-  V = g("101", "101", "101", "101", "010"),
-  W = g("101", "101", "111", "111", "101"),
-  X = g("101", "101", "010", "101", "101"),
-  Y = g("101", "101", "010", "010", "010"),
-  Z = g("111", "001", "010", "100", "111"),
-  ["0"] = g("111", "101", "101", "101", "111"),
-  ["1"] = g("010", "110", "010", "010", "111"),
-  ["2"] = g("110", "001", "010", "100", "111"),
-  ["3"] = g("110", "001", "010", "001", "110"),
-  ["4"] = g("101", "101", "111", "001", "001"),
-  ["5"] = g("111", "100", "110", "001", "110"),
-  ["6"] = g("011", "100", "111", "101", "111"),
-  ["7"] = g("111", "001", "010", "010", "010"),
-  ["8"] = g("111", "101", "111", "101", "111"),
-  ["9"] = g("111", "101", "111", "001", "110"),
-  ["$"] = g("011", "110", "010", "011", "110"),
-  ["+"] = g("000", "010", "111", "010", "000"),
-  ["-"] = g("000", "000", "111", "000", "000"),
-  ["/"] = g("001", "001", "010", "100", "100"),
-  ["."] = g("000", "000", "000", "000", "010"),
-  ["!"] = g("010", "010", "010", "000", "010"),
-  ["?"] = g("110", "001", "010", "000", "010"),
-  [":"] = g("000", "010", "000", "010", "000"),
+  A = g("010", "101", "111", "101", "101"), B = g("110", "101", "110", "101", "110"),
+  C = g("011", "100", "100", "100", "011"), D = g("110", "101", "101", "101", "110"),
+  E = g("111", "100", "110", "100", "111"), F = g("111", "100", "110", "100", "100"),
+  G = g("011", "100", "101", "101", "011"), H = g("101", "101", "111", "101", "101"),
+  I = g("111", "010", "010", "010", "111"), J = g("001", "001", "001", "101", "010"),
+  K = g("101", "101", "110", "101", "101"), L = g("100", "100", "100", "100", "111"),
+  M = g("101", "111", "111", "101", "101"), N = g("110", "101", "101", "101", "101"),
+  O = g("010", "101", "101", "101", "010"), P = g("110", "101", "110", "100", "100"),
+  Q = g("010", "101", "101", "111", "011"), R = g("110", "101", "110", "101", "101"),
+  S = g("011", "100", "010", "001", "110"), T = g("111", "010", "010", "010", "010"),
+  U = g("101", "101", "101", "101", "111"), V = g("101", "101", "101", "101", "010"),
+  W = g("101", "101", "111", "111", "101"), X = g("101", "101", "010", "101", "101"),
+  Y = g("101", "101", "010", "010", "010"), Z = g("111", "001", "010", "100", "111"),
+  ["0"] = g("111", "101", "101", "101", "111"), ["1"] = g("010", "110", "010", "010", "111"),
+  ["2"] = g("110", "001", "010", "100", "111"), ["3"] = g("110", "001", "010", "001", "110"),
+  ["4"] = g("101", "101", "111", "001", "001"), ["5"] = g("111", "100", "110", "001", "110"),
+  ["6"] = g("011", "100", "111", "101", "111"), ["7"] = g("111", "001", "010", "010", "010"),
+  ["8"] = g("111", "101", "111", "101", "111"), ["9"] = g("111", "101", "111", "001", "110"),
+  ["$"] = g("011", "110", "010", "011", "110"), ["+"] = g("000", "010", "111", "010", "000"),
+  ["-"] = g("000", "000", "111", "000", "000"), ["/"] = g("001", "001", "010", "100", "100"),
+  ["."] = g("000", "000", "000", "000", "010"), ["!"] = g("010", "010", "010", "000", "010"),
+  ["?"] = g("110", "001", "010", "000", "010"), [":"] = g("000", "010", "000", "010", "000"),
+  ["%"] = g("101", "001", "010", "100", "101"), ["("] = g("010", "100", "100", "100", "010"),
+  [")"] = g("010", "001", "001", "001", "010"), ["'"] = g("010", "010", "000", "000", "000"),
+  [","] = g("000", "000", "000", "010", "100"), ["<"] = g("001", "010", "100", "010", "001"),
+  [">"] = g("100", "010", "001", "010", "100"), ["#"] = g("101", "111", "101", "111", "101"),
+  ["="] = g("000", "111", "000", "111", "000"),
+}
+local GLYPH_ORDER = " ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789$+-/.!?:%()',<>#="
+local NARROW = { ["."] = true, [":"] = true, ["!"] = true, ["'"] = true, [","] = true, ["("] = true, [")"] = true }
+
+local PAL = {
+  ["1"] = { 255, 255, 255 },
+  k = { 24, 20, 26 }, K = { 46, 44, 52 }, d = { 64, 66, 76 }, e = { 108, 112, 126 }, E = { 160, 166, 180 }, W = { 214, 220, 228 },
+  y = { 255, 222, 74 }, Y = { 255, 246, 176 }, o = { 255, 146, 38 }, O = { 206, 84, 22 }, w = { 255, 255, 236 },
+  G = { 40, 82, 44 }, g = { 88, 146, 70 }, h = { 150, 196, 106 },
+  r = { 255, 64, 44 }, R = { 104, 18, 22 }, m = { 172, 28, 30 },
+  b = { 68, 92, 140 }, B = { 42, 56, 94 }, p = { 84, 70, 56 }, P = { 54, 44, 36 },
+  s = { 158, 168, 150 }, S = { 108, 118, 104 }, n = { 204, 112, 40 }, N = { 140, 68, 24 },
+  v = { 124, 134, 88 }, V = { 82, 92, 58 },
+  t = { 178, 122, 68 }, T = { 118, 78, 42 }, l = { 220, 170, 108 },
+  a = { 0, 0, 0, 70 }, q = { 255, 214, 90, 80 }, Q = { 255, 236, 150, 170 },
 }
 
-local PALETTE = {
-  k = { 22, 22, 26 },
-  d = { 56, 58, 66 },
-  e = { 120, 124, 136 },
-  y = { 255, 226, 80 },
-  o = { 255, 148, 40 },
-  w = { 255, 255, 230 },
-  t = { 196, 164, 104 },
-  T = { 150, 120, 72 },
-  G = { 58, 104, 56 },
-  g = { 112, 168, 88 },
-  r = { 216, 48, 48 },
-  m = { 70, 24, 24 },
-  b = { 84, 104, 150 },
-  x = { 150, 36, 36 },
-  p = { 58, 54, 84 },
+local ZOMBIE_BODY = {
+  "....kkkk....",
+  "...kggggk...",
+  "..kghgggGk..",
+  "..kgrggrGk..",
+  "..kggRRgGk..",
+  "...kgggGk...",
+  "..kkbbbbkk..",
+  ".kgbbbbbBgk.",
+  ".kgbbmbbBgk.",
+  "kgkbbbbbBkgk",
+  "kGkbbbbbBkGk",
+  "..kppppPPk..",
+  "..kppkkPPk..",
 }
+local ZOMBIE_LEGS_A = { "..kpk..kPk..", "..kkk..kPk..", ".......kkk.." }
+local ZOMBIE_LEGS_B = { "..kpk..kPk..", "..kpk..kkk..", "..kkk......." }
+local RUNNER_REMAP = { g = "s", G = "S", h = "W", b = "n", B = "N", r = "y" }
+
+local BRUTE_BODY = {
+  ".....kkkkkk.....",
+  "....kvvvvvvk....",
+  "...kvvvvvvvVk...",
+  "...kvrvvvvrVk...",
+  "...kvvRRRRvVk...",
+  "....kvvvvvVk....",
+  "..kkkNNNNNNkkk..",
+  ".kvvknnnnnNkvvk.",
+  "kvvvknnmnnNkvvvk",
+  "kvvvknnnnnNkvvvk",
+  "kVVvknnnnnNkvVVk",
+  ".kkkknnnnnNkkkk.",
+  "...kppppppPPk...",
+  "...kpppkkpPPk...",
+}
+local BRUTE_LEGS_A = { "...kppk..kPPk...", "...kkkk..kPPk...", ".........kkkk...", "................" }
+local BRUTE_LEGS_B = { "...kppk..kPPk...", "...kppk..kkkk...", "...kkkk.........", "................" }
+
+local SPRITE_ROWS = {
+  glock = {
+    ".kkkkkkkkkkk",
+    ".kEWWWWWWWEk",
+    ".kddddddddek",
+    ".kkKKkkkkkk.",
+    "..kKKk.k....",
+    "..kKKkk.....",
+    "..kkkk......",
+  },
+  uzi = {
+    "kkkkkkkkkkkk.",
+    "kEWWWWWWWWEkk",
+    "kdddddddddddk",
+    "kkkkKKkkkkkk.",
+    "...kKKk.kek..",
+    "...kKKk.kek..",
+    "...kkkk.kkk..",
+  },
+  shotgun = {
+    "..kkkkkkkkkkkkkkkk",
+    "kktltkkEWWWWWWWWWk",
+    "kttttTkdddddddddkk",
+    "kTTTk.kkkkkkkkkk..",
+    ".kkk..............",
+  },
+  rifle = {
+    ".........kkkk.........",
+    "........kEWWEk........",
+    "kkkkkkkkkkkkkkkkkkkkkk",
+    "kTttltkddddddddddddddk",
+    "kTTTTkkk.kk...........",
+    "kkkk..................",
+  },
+  flash1 = { "...y...", "..yoy..", ".yoYoy.", "yoYwYoy", ".yoYoy.", "..yoy..", "...y..." },
+  flash2 = { "..y..", ".yoy.", "yoway", ".yoy.", "..y.." },
+  flash3 = { "o.o", ".y.", "o.o" },
+  flare = { "..oyy..", "OoyYwwy", "..oyy.." },
+  glow = { ".qqq.", "qQQQq", "qQwQq", "qQQQq", ".qqq." },
+  heart = { ".kk.kk.", "kwrkrrk", "krrrrrk", ".krrrk.", "..krk..", "...k..." },
+  coin = { ".kkkk.", "kyYYyk", "kYyyOk", "kyyyOk", "kyOOOk", ".kkkk." },
+  skull = { ".kkkkk.", "kWWWWWk", "kWkWkWk", "kWWWWWk", ".kWkWk.", "..kkk.." },
+  arrow = { "..r..", ".rrr.", "rrrrr" },
+  shadowS = { ".aaaaaaaa.", "aaaaaaaaaa", ".aaaaaaaa." },
+  shadowL = { ".aaaaaaaaaaaa.", "aaaaaaaaaaaaaa", ".aaaaaaaaaaaa." },
+  splat1 = { "..m...", ".mRmm.", "mRRRm.", ".mRm.m", "..m..." },
+  splat2 = { "m...m.", ".mmR..", "..RRm.", ".mRm..", "m....m" },
+  splat3 = { ".mm..m.", "mRRm...", ".mRRmm.", "..m..m." },
+  pixel = { "1" },
+}
+
+local CACTUS = { "...gh...", "...gh..h", "g..gh..h", "g..gh..G", "gG.gh.gG", ".GGghGG.", "...gh...", "...gh...", "...gG...", "..aaaa.." }
+local ROCK = { "..EEe...", ".EEeed..", "Eeeeddd.", ".aaaaaa." }
+local BUSH = { "T...T..T.", ".T.T.TT..", "..TtT.T.T", ".T.TtT.T.", "...tTt...", "..aaaaa.." }
+local SKULL_DECOR = { ".www.", "wkwkw", "wwwww", ".w.w." }
+local BONES = { "w.....w", ".wwwww.", "w.....w" }
+local TIRE = { ".kkkkk.", "kKkkkKk", "kk...kk", "kKkkkKk", ".kkkkk." }
+
+local SAND_PAL = { { 96, 72, 48 }, { 128, 100, 64 }, { 160, 128, 84 }, { 190, 156, 104 }, { 214, 182, 126 }, { 232, 206, 150 }, { 246, 228, 182 } }
+local ASPH_PAL = { { 28, 28, 34 }, { 40, 40, 46 }, { 52, 52, 58 }, { 64, 64, 70 }, { 78, 78, 84 }, { 94, 94, 100 } }
+local BAYER = { 0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5 }
+
+local Assets = { owned = {} }
+local SP = {}
+local FLASH, SPLATS, BARRICADE = {}, {}, {}
+local atlas
+
+local function own(resource)
+  Assets.owned[#Assets.owned + 1] = resource
+  return resource
+end
 
 local function concatRows(a, b)
   local out = {}
@@ -290,571 +397,1163 @@ local function concatRows(a, b)
   return out
 end
 
-local ZOMBIE_TOP = {
-  "...GGGG...",
-  "..GggggG..",
-  "..GrggrG..",
-  "..GggggG..",
-  "..GmmmmG..",
-  "...GggG...",
-  ".bbbbbbbb.",
-  "gbbxbbbbbg",
-  "g.bbbbbb.g",
-  "..bbxbbb..",
-  "..bbbbbb..",
-}
-local ZOMBIE_LEGS_A = { "..pp..pp..", "..pp..pp..", "..kk..kk.." }
-local ZOMBIE_LEGS_B = { "..pp..pp..", ".pp....pp.", ".kk....kk." }
-
-local GLOCK_ROWS = {
-  ".kkkkkkkkkk.",
-  ".keeeeeeekk.",
-  ".kddddddddk.",
-  ".kkkkkkkkkk.",
-  ".kddk.......",
-  ".kddk.......",
-  ".kkkk.......",
-}
-
-local SANDBAG_ROWS = {
-  "....tttttttttt....",
-  "..tttTtttttTtttt..",
-  ".ttttTttttttTtttt.",
-  ".TTTTTTTTTTTTTTTT.",
-}
-
-local FLASH_ROWS = {
-  { "..y..", ".yoy.", "yowoy", ".yoy.", "..y.." },
-  { ".y.", "yoy", ".y." },
-  { "y.y", ".w.", "y.y" },
-}
-
-local FLARE_ROWS = { "..yyy.", "oyyyww", "..yyy." }
-
-local function buildBackground()
-  local rng = love.math.newRandomGenerator(20260)
-  local function rr() return rng:random() end
-  local data = love.image.newImageData(VW, VH)
-
-  local function put(x, y, r, gg, b)
-    if x >= 0 and x < VW and y >= 0 and y < VH then
-      data:setPixel(x, y, clamp(r, 0, 255) / 255, clamp(gg, 0, 255) / 255, clamp(b, 0, 255) / 255, 1)
-    end
-  end
-
-  local edgeL, edgeR = {}, {}
-  local oL, oR = 0, 0
-  for y = 0, VH - 1 do
-    oL = clamp(oL + (rr() - 0.5) * 1.6, -4, 4)
-    oR = clamp(oR + (rr() - 0.5) * 1.6, -4, 4)
-    edgeL[y] = floor(ROAD.left + oL)
-    edgeR[y] = floor(ROAD.right + oR)
-  end
-
-  local function sandColor(d, x, y)
-    local n = rng:random(-6, 6)
-    if d <= 4 then return 148 + n, 120 + n, 76 + n end
-    if d <= 8 then return 178 + n, 148 + n, 96 + n end
-    if d <= 12 then return 204 + n, 176 + n, 116 + n end
-    if d <= 15 then return 228 + n, 204 + n, 148 + n end
-    if d <= 16 then return 244 + n, 226 + n, 176 + n end
-    local r, gg, b = 224 + n, 198 + n, 138 + n
-    if (y + floor(x * 0.3)) % 14 == 0 then r, gg, b = r - 14, gg - 14, b - 12 end
-    if rr() < 0.012 then r, gg, b = 172, 142, 98 end
-    return r, gg, b
-  end
-
-  for y = 0, VH - 1 do
-    local eL, eR = edgeL[y], edgeR[y]
-    for x = 0, VW - 1 do
-      if x >= eL and x < eR then
-        local n = rng:random(-7, 7)
-        local r, gg, b = 72 + n, 72 + n, 78 + n
-        local d = min(x - eL, eR - 1 - x)
-        if d < 2 then
-          r, gg, b = 44 + n, 44 + n, 48 + n
-        elseif d < 9 and rr() < (9 - d) * 0.035 then
-          r, gg, b = 190 + n, 164 + n, 108 + n
-        end
-        if rr() < 0.012 then r, gg, b = 118, 118, 124 end
-        put(x, y, r, gg, b)
-      else
-        local d = x < eL and (eL - x) or (x - eR + 1)
-        local r, gg, b = sandColor(d, x, y)
-        put(x, y, r, gg, b)
-      end
-    end
-  end
-
-  for y = 0, VH - 1 do
-    if y % 26 < 15 then
-      for x = 159, 160 do
-        if rr() > 0.4 then
-          local n = rng:random(-10, 10)
-          put(x, y, 184 + n, 164 + n, 66)
-        end
-      end
-    end
-  end
-
-  for _ = 1, 6 do
-    local pw, ph = rng:random(14, 30), rng:random(9, 20)
-    local px, py = rng:random(100, 212 - pw), rng:random(8, 160)
-    for y = py, py + ph - 1 do
-      for x = px, px + pw - 1 do
-        local n = rng:random(-5, 5)
-        if x == px or x == px + pw - 1 or y == py or y == py + ph - 1 then
-          put(x, y, 40 + n, 40 + n, 44 + n)
-        else
-          put(x, y, 58 + n, 58 + n, 63 + n)
-        end
-      end
-    end
-  end
-
-  for _ = 1, 9 do
-    local cx, cy = rng:random(104, 216), rng:random(10, 176)
-    local rx, ry = rng:random(4, 10), rng:random(3, 6)
-    for y = cy - ry - 1, cy + ry + 1 do
-      for x = cx - rx - 1, cx + rx + 1 do
-        local dx, dy = (x - cx) / rx, (y - cy) / ry
-        local dist = dx * dx + dy * dy + (rr() - 0.5) * 0.35
-        if dist <= 1 then
-          local n = rng:random(-4, 4)
-          if dist > 0.65 then
-            put(x, y, 24 + n, 24 + n, 28 + n)
-          elseif rr() < 0.22 then
-            put(x, y, 92 + n, 76 + n, 52 + n)
-          else
-            put(x, y, 36 + n, 36 + n, 40 + n)
-          end
-        elseif dist <= 1.35 and dy < 0 then
-          put(x, y, 104, 104, 110)
-        end
-      end
-    end
-    for _ = 1, 8 do
-      put(cx + rng:random(-rx - 3, rx + 3), cy + rng:random(-ry - 3, ry + 3), 124, 124, 130)
-    end
-  end
-
-  local function crack(x, y, angle, len, depth)
-    for _ = 1, len do
-      angle = angle + (rr() - 0.5) * 0.9
-      x = x + cos(angle)
-      y = y + sin(angle)
-      local ix, iy = floor(x), floor(y)
-      if iy >= 0 and iy < VH and ix > edgeL[iy] + 2 and ix < edgeR[iy] - 3 then
-        put(ix + 1, iy, 100, 100, 106)
-        put(ix, iy, 26, 26, 30)
-        if depth == 0 and rr() < 0.3 then put(ix, iy + 1, 26, 26, 30) end
-      end
-      if depth < 2 and rr() < 0.05 then
-        local side = rr() < 0.5 and -1 or 1
-        crack(x, y, angle + side * (0.5 + rr() * 0.7), floor(len * 0.5), depth + 1)
-      end
-    end
-  end
-
-  for _ = 1, 16 do
-    crack(rng:random(96, 224), rng:random(0, 170), pi / 2 + (rr() - 0.5) * 1.6, rng:random(24, 70), 0)
-  end
-  for _ = 1, 3 do
-    crack(rng:random(96, 150), rng:random(20, 170), (rr() - 0.5) * 0.6, rng:random(30, 60), 0)
-  end
-
-  local image = love.graphics.newImage(data)
-  image:setFilter("nearest", "nearest")
-  data:release()
-  return track(image)
+local function quant(pal, v, x, y)
+  local n = #pal
+  local f = clamp(v, 0, 1) * (n - 1)
+  local i = floor(f)
+  if f - i > (BAYER[(y % 4) * 4 + (x % 4) + 1] + 0.5) / 16 then i = i + 1 end
+  if i > n - 1 then i = n - 1 end
+  return pal[i + 1]
 end
 
-local function buildBox()
-  local w, h = BOX.w, BOX.h
-  local rng = love.math.newRandomGenerator(77)
-  local data = love.image.newImageData(w, h)
-  local planks = { { 152, 100, 54 }, { 140, 90, 48 }, { 162, 108, 60 }, { 146, 94, 50 } }
-  local frame = 4
-
-  local function put(x, y, r, gg, b)
-    data:setPixel(x, y, clamp(r, 0, 255) / 255, clamp(gg, 0, 255) / 255, clamp(b, 0, 255) / 255, 1)
+local function slotCenters()
+  local list = {}
+  for row = 1, SLOT_ROWS do
+    for side = 1, 2 do
+      list[#list + 1] = { x = SLOT_X[side], y = SLOT_TOP + (row - 1) * SLOT_GAP, side = side }
+    end
   end
+  return list
+end
 
+local function buildFont()
+  local spans, total = {}, 1
+  for i = 1, #GLYPH_ORDER do
+    local ch = GLYPH_ORDER:sub(i, i)
+    local bits = GLYPHS[ch]
+    if not bits or #bits ~= 15 then error("malformed glyph '" .. ch .. "'") end
+    local x0, x1 = 0, 2
+    if ch == " " then
+      x1 = 1
+    elseif NARROW[ch] then
+      x0, x1 = 3, -1
+      for c = 0, 2 do
+        for r = 0, 4 do
+          if bits:sub(r * 3 + c + 1, r * 3 + c + 1) == "1" then
+            x0, x1 = min(x0, c), max(x1, c)
+          end
+        end
+      end
+    end
+    spans[i] = { x0, x1 }
+    total = total + (x1 - x0 + 1) + 1
+  end
+  local data = love.image.newImageData(total, 5)
+  local function separator(col)
+    for r = 0, 4 do data:setPixel(col, r, 1, 0, 1, 1) end
+  end
+  separator(0)
+  local x = 1
+  for i = 1, #GLYPH_ORDER do
+    local bits = GLYPHS[GLYPH_ORDER:sub(i, i)]
+    local x0, x1 = spans[i][1], spans[i][2]
+    for c = x0, x1 do
+      for r = 0, 4 do
+        if bits:sub(r * 3 + c + 1, r * 3 + c + 1) == "1" then
+          data:setPixel(x + c - x0, r, 1, 1, 1, 1)
+        end
+      end
+    end
+    x = x + (x1 - x0 + 1)
+    separator(x)
+    x = x + 1
+  end
+  local font = lg.newImageFont(data, GLYPH_ORDER, 1)
+  font:setFilter("nearest", "nearest")
+  data:release()
+  return own(font)
+end
+
+local function paintRows(data, s)
+  local rows, remap = s.rows, s.remap
+  for y = 1, s.h do
+    local row = rows[y]
+    for x = 1, s.w do
+      local ch = row:sub(x, x)
+      if remap and remap[ch] then ch = remap[ch] end
+      if ch ~= "." then
+        local c = PAL[ch]
+        if not c then error("unknown palette key '" .. ch .. "' in sprite " .. s.name) end
+        data:setPixel(s.x + x - 1, s.y + y - 1, c[1] / 255, c[2] / 255, c[3] / 255, (c[4] or 255) / 255)
+      end
+    end
+  end
+end
+
+local function makeSetter(data, s)
+  local ox, oy, w, h = s.x, s.y, s.w, s.h
+  return function(x, y, r, gg, b, a)
+    if x >= 0 and y >= 0 and x < w and y < h then
+      data:setPixel(ox + x, oy + y, clamp(r, 0, 255) / 255, clamp(gg, 0, 255) / 255, clamp(b, 0, 255) / 255, (a or 255) / 255)
+    end
+  end
+end
+
+local function padPainter(full)
+  return function(set, w, h)
+    local cx, cy = (w - 1) / 2, (h - 1) / 2
+    for y = 0, h - 1 do
+      for x = 0, w - 1 do
+        local dx, dy = x - cx, y - cy
+        local r = sqrt(dx * dx + dy * dy)
+        local hash = ((x * 7 + y * 13 + x * y * 3) % 11) / 11
+        if full then
+          if r <= 12.6 then
+            if r >= 8.2 then
+              local seg = (atan2(dy, dx) + pi) / TAU * 9
+              local f = seg - floor(seg)
+              local light = -(dx + dy) * 0.7071 / max(r, 0.001)
+              local bulge = (1 - abs(f - 0.5) * 2) * (1 - abs((r - 8.2) / 4.4 - 0.5) * 2)
+              local v = 0.45 + light * 0.3 + bulge * 0.35 + (hash - 0.5) * 0.08
+              if r > 11.9 then
+                set(x, y, 70, 52, 32)
+              elseif f < 0.07 or f > 0.93 then
+                set(x, y, 116, 94, 58)
+              elseif v > 0.78 then
+                set(x, y, 240, 222, 172)
+              elseif v > 0.52 then
+                set(x, y, 214, 190, 136)
+              elseif v > 0.3 then
+                set(x, y, 176, 150, 100)
+              else
+                set(x, y, 136, 112, 72)
+              end
+            elseif r >= 7.2 then
+              set(x, y, 96, 76, 48)
+            elseif hash > 0.8 then
+              set(x, y, 128, 104, 68)
+            else
+              set(x, y, 146, 120, 80)
+            end
+          end
+        else
+          if r <= 11.6 and r >= 10.4 then
+            if floor((atan2(dy, dx) + pi) / TAU * 18) % 2 == 0 then set(x, y, 150, 122, 80, 220) end
+          elseif r < 10.4 then
+            set(x, y, 120, 96, 60, 60)
+          end
+          if (abs(dx) < 0.6 and abs(dy) < 3.5) or (abs(dy) < 0.6 and abs(dx) < 3.5) then
+            set(x, y, 120, 96, 60, 200)
+          end
+        end
+      end
+    end
+  end
+end
+
+local function barricadePainter(dmg)
+  return function(set, w, h)
+    local rng = lm.newRandomGenerator(900 + dmg)
+    local top, bottom = {}, {}
+    if dmg >= 1 then
+      top[#top + 1] = { 24, 40 }
+      bottom[#bottom + 1] = { 118, 128 }
+    end
+    if dmg >= 2 then
+      top[#top + 1] = { 96, 120 }
+      bottom[#bottom + 1] = { 52, 78 }
+    end
+    local function holed(list, x, y)
+      for i = 1, #list do
+        if x >= list[i][1] + (y % 2) and x <= list[i][2] - ((y + 1) % 2) then return true end
+      end
+      return false
+    end
+    local function plank(y0, holes)
+      for x = 0, w - 1 do
+        for y = 0, 4 do
+          if not holed(holes, x, y) then
+            local grain = lm.noise(x * 0.15, (y0 + y) * 0.9 + y0)
+            if y == 0 then
+              set(x, y0 + y, 222, 172, 110)
+            elseif y == 4 then
+              set(x, y0 + y, 110, 72, 38)
+            elseif grain > 0.72 then
+              set(x, y0 + y, 146, 98, 54)
+            else
+              set(x, y0 + y, 178, 122, 68)
+            end
+          end
+        end
+      end
+    end
+    plank(4, top)
+    plank(11, bottom)
+    if dmg >= 1 then
+      for _ = 1, 4 + dmg * 4 do
+        local cx, cy = rng:random(4, w - 5), rng:random(0, 1) == 0 and 6 or 13
+        for i = 0, rng:random(3, 8) do set(cx + i, cy + (i % 3 == 0 and 1 or 0), 70, 44, 22) end
+      end
+    end
+    local posts = { 0, 48, 100, 148 }
+    for i = 1, #posts do
+      local px = posts[i]
+      for y = 2, h - 1 do
+        for x = 0, 3 do
+          if x == 0 then
+            set(px + x, y, 150, 104, 60)
+          elseif x == 3 or y == h - 1 then
+            set(px + x, y, 70, 46, 24)
+          else
+            set(px + x, y, 104, 68, 36)
+          end
+        end
+      end
+      set(px + 1, 2, 60, 40, 20)
+      set(px + 2, 2, 60, 40, 20)
+      set(px + 1, 6, 40, 40, 46)
+      set(px + 2, 13, 40, 40, 46)
+    end
+    for x = 0, w - 1 do
+      if not (dmg >= 2 and x > 60 and x < 110) then
+        set(x, 1 + floor((x % 6) / 3), 150, 156, 170)
+        if x % 8 == 0 then
+          set(x, 0, 90, 94, 104)
+          set(x, 3, 90, 94, 104)
+        end
+      end
+    end
+  end
+end
+
+local function boxPainter(set, w, h)
+  local frame = 5
   for y = 0, h - 1 do
     for x = 0, w - 1 do
-      local n = rng:random(-6, 6)
-      local r, gg, b
-      if x < frame or x >= w - frame or y < frame or y >= h - frame then
-        r, gg, b = 104 + n, 66 + n, 34 + n
-        if y == 0 or x == 0 then
-          r, gg, b = 188, 138, 84
-        elseif y == h - 1 or x == w - 1 then
-          r, gg, b = 56, 34, 18
+      local n = ((x * 31 + y * 17) % 7) - 3
+      if x == 0 or y == 0 or x == w - 1 or y == h - 1 then
+        set(x, y, 40, 24, 12)
+      elseif x < frame or y < frame or x >= w - frame or y >= h - frame then
+        if x == 1 or y == 1 then
+          set(x, y, 176, 126, 74)
+        elseif x == frame - 1 and y >= frame - 1 and y < h - frame + 1 or y == frame - 1 and x >= frame - 1 and x < w - frame + 1 then
+          set(x, y, 58, 36, 18)
+        else
+          set(x, y, 100 + n, 62 + n, 32 + n)
         end
       else
         local py = y - frame
-        local c = planks[floor(py / 11) % #planks + 1]
-        r, gg, b = c[1] + n, c[2] + n, c[3] + n
-        if py % 11 == 10 then
-          r, gg, b = 84, 52, 26
-        elseif py % 11 == 0 then
-          r, gg, b = r + 14, gg + 10, b + 6
+        local plank = floor(py / 9)
+        local row = py % 9
+        local base = (plank % 2 == 0) and 150 or 140
+        local grain = lm.noise(x * 0.06, y * 0.7 + plank * 7)
+        if row == 8 then
+          set(x, y, 78, 48, 24)
+        elseif row == 0 then
+          set(x, y, base + 26, floor(base * 0.68) + 20, floor(base * 0.36) + 14)
+        elseif grain > 0.7 then
+          set(x, y, base - 22 + n, floor(base * 0.66) - 16 + n, floor(base * 0.34) - 8 + n)
+        else
+          set(x, y, base + n, floor(base * 0.66) + n, floor(base * 0.34) + n)
         end
-        if y == frame or x == frame then r, gg, b = 64, 40, 20 end
       end
-      put(x, y, r, gg, b)
+    end
+  end
+  for x = frame, w - frame - 1 do
+    set(x, 16, 50, 30, 14)
+    set(x, 17, 190, 140, 86)
+  end
+  local corners = { { 0, 0, 1, 1 }, { w - 1, 0, -1, 1 }, { 0, h - 1, 1, -1 }, { w - 1, h - 1, -1, -1 } }
+  for i = 1, #corners do
+    local cx, cy, sx, sy = corners[i][1], corners[i][2], corners[i][3], corners[i][4]
+    for a = 0, 10 do
+      for b = 0, 2 do
+        local c1 = (b == 0) and 180 or 124
+        set(cx + sx * a, cy + sy * b, c1, c1 + 6, c1 + 18)
+        set(cx + sx * b, cy + sy * a, c1, c1 + 6, c1 + 18)
+      end
+    end
+    set(cx + sx * 7, cy + sy * 1, 50, 52, 60)
+    set(cx + sx * 1, cy + sy * 7, 50, 52, 60)
+  end
+  local lx = floor(w / 2) - 5
+  for y = 11, 22 do
+    for x = lx, lx + 10 do
+      local edge = x == lx or x == lx + 10 or y == 11 or y == 22
+      if edge then set(x, y, 60, 62, 72) else set(x, y, 140, 146, 160) end
+    end
+  end
+  for y = 14, 18 do set(lx + 5, y, 30, 30, 36) end
+  set(lx + 4, 15, 30, 30, 36)
+  set(lx + 6, 15, 30, 30, 36)
+end
+
+local function buildAtlas()
+  local sources = {}
+  local function rows(name, r, remap)
+    sources[#sources + 1] = { name = name, rows = r, remap = remap, w = #r[1], h = #r }
+  end
+  local function paint(name, w, h, fn)
+    sources[#sources + 1] = { name = name, w = w, h = h, paint = fn }
+  end
+  rows("walkerA", concatRows(ZOMBIE_BODY, ZOMBIE_LEGS_A))
+  rows("walkerB", concatRows(ZOMBIE_BODY, ZOMBIE_LEGS_B))
+  rows("runnerA", concatRows(ZOMBIE_BODY, ZOMBIE_LEGS_A), RUNNER_REMAP)
+  rows("runnerB", concatRows(ZOMBIE_BODY, ZOMBIE_LEGS_B), RUNNER_REMAP)
+  rows("bruteA", concatRows(BRUTE_BODY, BRUTE_LEGS_A))
+  rows("bruteB", concatRows(BRUTE_BODY, BRUTE_LEGS_B))
+  for name, r in pairs(SPRITE_ROWS) do rows(name, r) end
+  paint("padFull", 26, 26, padPainter(true))
+  paint("padEmpty", 26, 26, padPainter(false))
+  for i = 1, 3 do paint("barricade" .. i, 152, 18, barricadePainter(i - 1)) end
+  paint("box", 236, 52, boxPainter)
+
+  for i = 1, #sources do
+    local s = sources[i]
+    if s.rows then
+      for r = 1, #s.rows do
+        if #s.rows[r] ~= s.w then
+          error("sprite '" .. s.name .. "' row " .. r .. " has width " .. #s.rows[r] .. ", expected " .. s.w)
+        end
+      end
+    end
+  end
+  table.sort(sources, function(a, b)
+    if a.h ~= b.h then return a.h > b.h end
+    return a.name < b.name
+  end)
+  local width = 256
+  local x, y, shelf = 1, 1, 0
+  for i = 1, #sources do
+    local s = sources[i]
+    if s.w + 2 > width then error("sprite '" .. s.name .. "' is too wide for the atlas") end
+    if x + s.w + 1 > width then
+      x, y, shelf = 1, y + shelf + 1, 0
+    end
+    s.x, s.y = x, y
+    x = x + s.w + 1
+    if s.h > shelf then shelf = s.h end
+  end
+  local height = y + shelf + 1
+  local data = love.image.newImageData(width, height)
+  for i = 1, #sources do
+    local s = sources[i]
+    if s.rows then paintRows(data, s) else s.paint(makeSetter(data, s), s.w, s.h) end
+  end
+  local image = lg.newImage(data)
+  image:setFilter("nearest", "nearest")
+  data:release()
+  for i = 1, #sources do
+    local s = sources[i]
+    SP[s.name] = { quad = own(lg.newQuad(s.x, s.y, s.w, s.h, width, height)), w = s.w, h = s.h }
+  end
+  return own(image)
+end
+
+local function buildBackground()
+  local W, H = WORLD_W, WORLD_H
+  local rng = lm.newRandomGenerator(424242)
+  local function rr() return rng:random() end
+  local function ri(a, b) return rng:random(a, b) end
+  local data = love.image.newImageData(W, H)
+  local function put(x, y, c, a)
+    if x < 0 or y < 0 or x >= W or y >= H then return end
+    if a and a < 1 then
+      local r0, g0, b0 = data:getPixel(x, y)
+      data:setPixel(x, y, r0 + (c[1] / 255 - r0) * a, g0 + (c[2] / 255 - g0) * a, b0 + (c[3] / 255 - b0) * a, 1)
+    else
+      data:setPixel(x, y, c[1] / 255, c[2] / 255, c[3] / 255, 1)
+    end
+  end
+  local function stamp(rows, x0, y0, flip)
+    for r = 1, #rows do
+      local row = rows[r]
+      local w = #row
+      for c = 1, w do
+        local ch = row:sub(c, c)
+        local col = PAL[ch]
+        if col then
+          put(flip and (x0 + w - c) or (x0 + c - 1), y0 + r - 1, col, col[4] and col[4] / 255 or nil)
+        end
+      end
     end
   end
 
-  for _ = 1, 46 do
-    local sx, sy = rng:random(frame + 1, w - frame - 20), rng:random(frame + 1, h - frame - 2)
-    for i = 0, rng:random(6, 18) do
-      local x = sx + i
-      if x < w - frame then
-        local pr, pg, pb = data:getPixel(x, sy)
-        data:setPixel(x, sy, pr * 0.88, pg * 0.88, pb * 0.88, 1)
+  local eL, eR = {}, {}
+  local oL, oR = 0, 0
+  for y = 0, H - 1 do
+    oL = clamp(oL + (rr() - 0.5) * 1.2, -3, 3)
+    oR = clamp(oR + (rr() - 0.5) * 1.2, -3, 3)
+    eL[y] = floor(ROAD_L + oL + sin(y * 0.031) * 2)
+    eR[y] = floor(ROAD_R + oR + sin(y * 0.027 + 1.7) * 2)
+  end
+
+  for y = 0, H - 1 do
+    local l, r = eL[y], eR[y]
+    for x = 0, W - 1 do
+      if x >= l and x < r then
+        local v = 0.5 + (rr() - 0.5) * 0.2 + (lm.noise(x * 0.045, y * 0.045) - 0.5) * 0.3
+        local dl = x - l
+        if dl < 8 then v = v - 0.34 * (1 - dl / 8) end
+        if r - 1 - x < 2 then v = v - 0.18 end
+        put(x, y, quant(ASPH_PAL, v, x, y))
+      else
+        local left = x < l
+        local d = left and (l - x) or (x - r + 1)
+        local v
+        if d <= BANK then
+          local t = d / BANK
+          if left then v = 0.14 + 0.3 * t else v = 0.6 + 0.18 * t end
+          if d >= BANK - 1 then v = left and 0.7 or 0.92 end
+        else
+          local rip = sin(y * 0.42 + sin(x * 0.06 + y * 0.015) * 3.2 + x * 0.05)
+          v = 0.55 + rip * 0.07 + (lm.noise(x * 0.02 + 40, y * 0.02) - 0.5) * 0.16
+          if rip > 0.9 then
+            v = v + 0.12
+          elseif rip < -0.92 then
+            v = v - 0.1
+          end
+        end
+        put(x, y, quant(SAND_PAL, v + (rr() - 0.5) * 0.08, x, y))
       end
     end
+  end
+
+  local paintY, paintW = { 206, 178, 74 }, { 196, 196, 188 }
+  local cx = floor(ROAD_C) - 1
+  for y = 0, H - 1 do
+    if y % 30 < 16 then
+      for x = cx, cx + 1 do
+        if lm.noise(x * 0.7, y * 0.23) > 0.3 then put(x, y, paintY, 0.85) end
+      end
+    end
+    if lm.noise(3.3, y * 0.07) > 0.3 then
+      if rr() > 0.2 then put(eL[y] + 9, y, paintW, 0.55) end
+      if rr() > 0.2 then put(eR[y] - 6, y, paintW, 0.65) end
+    end
+  end
+
+  for _ = 1, 7 do
+    local pw, ph = ri(14, 34), ri(10, 26)
+    local px, py = ri(ROAD_L + 10, ROAD_R - 10 - pw), ri(4, BARRICADE_Y - 30)
+    for y = py, py + ph - 1 do
+      for x = px, px + pw - 1 do
+        local edge = x == px or y == py or x == px + pw - 1 or y == py + ph - 1
+        put(x, y, quant(ASPH_PAL, edge and 0.12 or (0.32 + (rr() - 0.5) * 0.12), x, y))
+      end
+    end
+  end
+
+  for y = 0, H - 1 do
+    local l, r = eL[y], eR[y]
+    for x = l, l + 14 do
+      local d = x - l
+      if lm.noise(x * 0.09, y * 0.06 + 11) > 0.55 + d * 0.035 then
+        put(x, y, quant(SAND_PAL, 0.36 + (rr() - 0.5) * 0.15, x, y))
+      end
+    end
+    for x = r - 15, r - 1 do
+      local d = r - 1 - x
+      if lm.noise(x * 0.09 + 77, y * 0.06) > 0.55 + d * 0.035 then
+        put(x, y, quant(SAND_PAL, 0.6 + (rr() - 0.5) * 0.15, x, y))
+      end
+    end
+  end
+
+  local crackDark, crackLight = ASPH_PAL[1], ASPH_PAL[6]
+  local function crack(x, y, ang, len, depth)
+    for _ = 1, len do
+      ang = ang + (rr() - 0.5) * 0.8
+      x, y = x + cos(ang), y + sin(ang)
+      local ix, iy = floor(x), floor(y)
+      if iy >= 0 and iy < H and ix > eL[iy] + 2 and ix < eR[iy] - 3 then
+        put(ix + 1, iy + 1, crackLight, 0.6)
+        put(ix, iy, crackDark)
+        if depth == 0 and rr() < 0.25 then put(ix + 1, iy, crackDark) end
+      end
+      if depth < 2 and rr() < 0.05 then
+        crack(x, y, ang + (rr() < 0.5 and -1 or 1) * (0.5 + rr() * 0.7), floor(len * 0.5), depth + 1)
+      end
+    end
+  end
+  for _ = 1, 26 do crack(ri(ROAD_L + 6, ROAD_R - 6), ri(0, H - 20), pi / 2 + (rr() - 0.5) * 1.6, ri(24, 80), 0) end
+  for _ = 1, 6 do crack(ri(ROAD_L + 6, floor(ROAD_C)), ri(10, H - 30), (rr() - 0.5) * 0.6, ri(30, 70), 0) end
+
+  for _ = 1, 14 do
+    local px, py = ri(ROAD_L + 18, ROAD_R - 18), ri(8, BARRICADE_Y - 16)
+    local rx, ry = ri(4, 11), ri(3, 7)
+    for y = py - ry - 2, py + ry + 2 do
+      for x = px - rx - 2, px + rx + 2 do
+        local dx, dy = (x - px) / rx, (y - py) / ry
+        local dist = dx * dx + dy * dy + (lm.noise(x * 0.4, y * 0.4) - 0.5) * 0.5
+        if dist <= 1 then
+          if dist > 0.6 and dy < 0 then
+            put(x, y, ASPH_PAL[1])
+          elseif dist > 0.7 and dy > 0 then
+            put(x, y, ASPH_PAL[4])
+          elseif rr() < 0.18 then
+            put(x, y, SAND_PAL[2])
+          else
+            put(x, y, ASPH_PAL[2])
+          end
+        elseif dist <= 1.45 and rr() < 0.55 then
+          put(x, y, dy < 0 and ASPH_PAL[5] or ASPH_PAL[3])
+        end
+      end
+    end
+    for _ = 1, 10 do put(px + ri(-rx - 4, rx + 4), py + ri(-ry - 4, ry + 4), ASPH_PAL[5]) end
   end
 
   for _ = 1, 3 do
-    local kx, ky = rng:random(frame + 6, w - frame - 6), rng:random(frame + 5, h - frame - 5)
-    for dy = -2, 2 do
-      for dx = -2, 2 do
-        local d = dx * dx + dy * dy
-        if d <= 5 then
-          if d >= 3 then put(kx + dx, ky + dy, 70, 42, 20) else put(kx + dx, ky + dy, 108, 68, 34) end
-        end
+    local x0, y0, len = ri(ROAD_L + 20, ROAD_R - 40), ri(20, H - 120), ri(50, 110)
+    local k = (rr() - 0.5) * 0.004
+    for t = 0, len do
+      local x = floor(x0 + k * t * t * 0.5)
+      if rr() > 0.15 then
+        put(x, y0 + t, ASPH_PAL[1], 0.45)
+        put(x + 10, y0 + t, ASPH_PAL[1], 0.45)
       end
     end
   end
 
-  local nails = { { 2, 2 }, { w - 3, 2 }, { 2, h - 3 }, { w - 3, h - 3 } }
-  for i = 1, #nails do
-    local nx, ny = nails[i][1], nails[i][2]
-    put(nx, ny, 64, 64, 70)
-    put(nx + 1, ny, 48, 48, 54)
-    put(nx, ny + 1, 48, 48, 54)
-    put(nx - 1, ny - 1, 150, 150, 160)
+  local oil, stain = { 20, 20, 26 }, { 92, 30, 28 }
+  for _ = 1, 6 do
+    local px, py, rad = ri(ROAD_L + 14, ROAD_R - 14), ri(10, H - 30), ri(3, 7)
+    local c = rr() < 0.4 and stain or oil
+    for y = py - rad, py + rad do
+      for x = px - rad * 2, px + rad * 2 do
+        local dx, dy = (x - px) / (rad * 1.6), (y - py) / rad
+        if dx * dx + dy * dy + (lm.noise(x * 0.3, y * 0.3) - 0.5) * 0.8 < 1 then put(x, y, c, 0.55) end
+      end
+    end
   end
 
-  local image = love.graphics.newImage(data)
+  local slots = slotCenters()
+  local function free(x, y, w, h)
+    for i = 1, #slots do
+      local dx, dy = (x + w / 2) - slots[i].x, (y + h / 2) - slots[i].y
+      if dx * dx + dy * dy < 22 * 22 then return false end
+    end
+    return true
+  end
+  local decor = { CACTUS, ROCK, ROCK, BUSH, BUSH, SKULL_DECOR, BONES, TIRE, ROCK }
+  local placed = 0
+  for _ = 1, 400 do
+    if placed >= 46 then break end
+    local rows = decor[ri(1, #decor)]
+    local w, h = #rows[1], #rows
+    local x
+    if rr() < 0.5 then x = ri(2, ROAD_L - BANK - w - 6) else x = ri(ROAD_R + BANK + 4, W - w - 2) end
+    local y = ri(2, H - h - 2)
+    if free(x, y, w, h) then
+      stamp(rows, x, y, rr() < 0.5)
+      placed = placed + 1
+    end
+  end
+  for _ = 1, 600 do
+    local x, y = ri(0, W - 1), ri(0, H - 1)
+    if x < eL[y] - BANK or x > eR[y] + BANK then put(x, y, SAND_PAL[ri(2, 3)]) end
+  end
+
+  local image = lg.newImage(data)
   image:setFilter("nearest", "nearest")
   data:release()
-  return track(image)
+  return own(image)
 end
 
-local function loadAssets()
-  for ch, bits in pairs(GLYPHS) do
-    assert(#bits == 15, "malformed glyph '" .. ch .. "'")
-    local data = love.image.newImageData(3, 5)
-    for i = 0, 14 do
-      if bits:sub(i + 1, i + 1) == "1" then data:setPixel(i % 3, floor(i / 3), 1, 1, 1, 1) end
-    end
-    local image = love.graphics.newImage(data)
-    image:setFilter("nearest", "nearest")
-    data:release()
-    track(image)
-    Assets.glyphs[ch:byte()] = image
-    local lower = ch:lower()
-    if lower ~= ch then Assets.glyphs[lower:byte()] = image end
-  end
-
-  Assets.sprites.zombieA = assert(buildSprite(concatRows(ZOMBIE_TOP, ZOMBIE_LEGS_A), PALETTE))
-  Assets.sprites.zombieB = assert(buildSprite(concatRows(ZOMBIE_TOP, ZOMBIE_LEGS_B), PALETTE))
-  Assets.sprites.glock = assert(buildSprite(GLOCK_ROWS, PALETTE))
-  Assets.sprites.sandbag = assert(buildSprite(SANDBAG_ROWS, PALETTE))
-  Assets.sprites.flare = assert(buildSprite(FLARE_ROWS, PALETTE))
-  for i = 1, #FLASH_ROWS do
-    Assets.flashes[i] = assert(buildSprite(FLASH_ROWS[i], PALETTE))
-  end
+local function buildAssets()
+  Assets.font = buildFont()
+  atlas = buildAtlas()
   Assets.background = buildBackground()
-  Assets.box = buildBox()
-end
-
-local function textWidth(str, scale)
-  local n = #str
-  if n == 0 then return 0 end
-  return (n * 4 - 1) * scale
-end
-
-local function drawRun(str, x, y, scale)
-  local glyphs = Assets.glyphs
-  for i = 1, #str do
-    local image = glyphs[str:byte(i)]
-    if image then love.graphics.draw(image, x, y, 0, scale, scale) end
-    x = x + 4 * scale
+  FLASH[1], FLASH[2], FLASH[3] = SP.flash1, SP.flash2, SP.flash3
+  SPLATS[1], SPLATS[2], SPLATS[3] = SP.splat1, SP.splat2, SP.splat3
+  BARRICADE[1], BARRICADE[2], BARRICADE[3] = SP.barricade1, SP.barricade2, SP.barricade3
+  for _, zt in pairs(ZTYPES) do
+    zt.sprA, zt.sprB, zt.shadowSpr = SP[zt.a], SP[zt.b], SP[zt.shadow]
+    if not (zt.sprA and zt.sprB and zt.shadowSpr) then error("missing zombie sprite") end
+  end
+  for i = 1, #WEAPONS do
+    if not SP[WEAPONS[i].sprite] then error("missing weapon sprite " .. WEAPONS[i].sprite) end
   end
 end
 
-local function drawText(str, x, y, scale, color, alpha, shadow)
+local function spr(s, x, y, r, sx, sy, ox, oy)
+  lg.draw(atlas, s.quad, x, y, r or 0, sx or 1, sy or 1, ox or 0, oy or 0)
+end
+
+local function text(str, x, y, s, color, alpha, shadow)
+  s = s or 1
+  x, y = floor(x), floor(y)
   local a = alpha or 1
   if shadow then
-    love.graphics.setColor(0, 0, 0, 0.55 * a)
-    drawRun(str, x + scale, y + scale, scale)
+    lg.setColor(0, 0, 0, 0.6 * a)
+    lg.print(str, x + s, y + s, 0, s, s)
   end
-  setColor(color or COLOR.white, a)
-  drawRun(str, x, y, scale)
+  setColor(color or C.white, a)
+  lg.print(str, x, y, 0, s, s)
 end
 
-local function drawTextCentered(str, cx, y, scale, color, alpha, shadow)
-  drawText(str, floor(cx - textWidth(str, scale) / 2), y, scale, color, alpha, shadow)
+local function textWidth(str, s)
+  return Assets.font:getWidth(str) * (s or 1)
 end
 
-local function drawTextRight(str, rx, y, scale, color, alpha, shadow)
-  drawText(str, rx - textWidth(str, scale), y, scale, color, alpha, shadow)
+local function textCenter(str, cx, y, s, color, alpha, shadow)
+  text(str, cx - textWidth(str, s) / 2, y, s, color, alpha, shadow)
 end
 
-local function drawSprite(sprite, x, y, rot, sx, sy, ox, oy)
-  love.graphics.draw(sprite.image, snap(x), snap(y), rot or 0, sx or 1, sy or 1, ox or 0, oy or 0)
+local function textRight(str, rx, y, s, color, alpha, shadow)
+  text(str, rx - textWidth(str, s), y, s, color, alpha, shadow)
 end
 
-local function drawWeapon(def, x, y, angle, kick, alpha)
-  local dirx = cos(angle)
-  local flip = dirx >= 0 and 1 or -1
-  local rot = angle + (dirx >= 0 and -kick or kick)
-  love.graphics.setColor(1, 1, 1, alpha or 1)
-  drawSprite(Assets.sprites[def.sprite], x, y, rot, 1, flip, 3, 2)
+local function frameRect(x, y, w, h)
+  lg.rectangle("fill", x, y, w, 1)
+  lg.rectangle("fill", x, y + h - 1, w, 1)
+  lg.rectangle("fill", x, y, 1, h)
+  lg.rectangle("fill", x + w - 1, y, 1, h)
 end
 
-local function frameRect(x, y, w, h, color, alpha)
+local function dottedRing(x, y, r, phase, color, alpha)
+  local n = max(12, floor(r * TAU / 5))
+  local q = SP.pixel.quad
   setColor(color, alpha)
-  love.graphics.rectangle("fill", x, y, w, 1)
-  love.graphics.rectangle("fill", x, y + h - 1, w, 1)
-  love.graphics.rectangle("fill", x, y, 1, h)
-  love.graphics.rectangle("fill", x + w - 1, y, 1, h)
+  for i = 0, n - 1 do
+    local a = phase + i / n * TAU
+    lg.draw(atlas, q, floor(x + cos(a) * r + 0.5), floor(y + sin(a) * r + 0.5))
+  end
 end
 
-local function pickWeapon()
-  local total = 0
-  for i = 1, #WEAPON_LIST do total = total + WEAPON_LIST[i].weight end
-  local roll = rnd() * total
-  for i = 1, #WEAPON_LIST do
-    roll = roll - WEAPON_LIST[i].weight
-    if roll <= 0 then return WEAPON_LIST[i] end
+local function sortByY(list)
+  for i = 2, #list do
+    local v = list[i]
+    local y = v.y
+    local j = i - 1
+    while j >= 1 and list[j].y > y do
+      list[j + 1] = list[j]
+      j = j - 1
+    end
+    list[j + 1] = v
   end
-  return WEAPON_LIST[#WEAPON_LIST]
 end
+
+local function parseSave(content)
+  if type(content) ~= "string" or #content == 0 or #content > MAX_SAVE_BYTES then return nil end
+  local body, sum = content:match("^(.-)\nsum=(%d+)\n?$")
+  if not body or tonumber(sum) ~= checksum(body) then return nil end
+  local fields, list = {}, {}
+  for line in body:gmatch("[^\n]+") do
+    local k, v = line:match("^(%a+)=([%w%.%-,]+)$")
+    if not k then return nil end
+    if k == "t" then
+      if #list < 64 then list[#list + 1] = v end
+    else
+      fields[k] = v
+    end
+  end
+  if tonumber(fields.v) ~= SAVE_VERSION then return nil end
+  return fields, list
+end
+
+local function readSave(name)
+  local candidates = { name, name .. ".bak" }
+  for i = 1, #candidates do
+    local file = candidates[i]
+    local ok, info = pcall(lf.getInfo, file)
+    if ok and info and info.type == "file" and (info.size or 0) <= MAX_SAVE_BYTES then
+      local okRead, content = pcall(lf.read, file)
+      if okRead and content then
+        local fields, list = parseSave(content)
+        if fields then return fields, list end
+      end
+    end
+  end
+  return nil
+end
+
+local function writeSave(name, content)
+  local ok, res = pcall(lf.write, name, content)
+  if not ok or not res then return false end
+  pcall(lf.write, name .. ".bak", content)
+  return true
+end
+
+local function removeSave(name)
+  pcall(lf.remove, name)
+  pcall(lf.remove, name .. ".bak")
+end
+
+local function sealed(lines)
+  local body = concat(lines, "\n")
+  return body .. "\nsum=" .. checksum(body) .. "\n"
+end
+
+local function serializeMeta(m)
+  return sealed({
+    "v=" .. SAVE_VERSION,
+    "best=" .. int(m.best),
+    "total=" .. int(m.total),
+    "zoom=" .. int(m.zoom),
+    "full=" .. (m.full and 1 or 0),
+    "speed=" .. int(m.speed),
+  })
+end
+
+local function loadMeta()
+  local m = { best = 0, total = 0, zoom = 0, full = false, speed = 1 }
+  local fields = readSave(SAVE_META)
+  if fields then
+    m.best = num(fields.best, 0, 1e7, 0)
+    m.total = num(fields.total, 0, 1e12, 0)
+    m.zoom = num(fields.zoom, -4, 0, 0)
+    m.full = fields.full == "1"
+    m.speed = fields.speed == "2" and 2 or 1
+  end
+  return m
+end
+
+local view = { scale = 1, x = 0, y = 0, vh = MIN_VH }
+local canvas, ui, game, meta
+local fatalError, defaultFont
+local computeViewport, changeZoom
 
 local Button = {}
 Button.__index = Button
 
-function Button.new(x, y, w, h, label, theme, scale)
-  return setmetatable({ x = x, y = y, w = w, h = h, label = label, theme = theme, scale = scale or 1, enabled = true }, Button)
+function Button.new(label, theme, scale)
+  return setmetatable({ x = 0, y = 0, w = 10, h = 10, label = label, theme = theme, scale = scale or 1, enabled = true, visible = true }, Button)
+end
+
+function Button:place(x, y, w, h)
+  self.x, self.y, self.w, self.h = x, y, w, h
 end
 
 function Button:contains(px, py)
-  return px >= self.x and px < self.x + self.w and py >= self.y and py < self.y + self.h
+  return self.visible and px >= self.x and px < self.x + self.w and py >= self.y and py < self.y + self.h
+end
+
+function Button:hit(px, py)
+  return self.enabled and self:contains(px, py)
 end
 
 function Button:draw(mx, my, down)
-  local enabled = self.enabled
-  local hover = enabled and self:contains(mx, my)
+  if not self.visible then return end
+  local on = self.enabled
+  local hover = on and self:contains(mx, my)
   local pressed = hover and down
-  local t = enabled and self.theme or DISABLED
-  local face = (hover and t.hover) or t.face
-  local x, y, w, h = self.x, self.y, self.w, self.h
-  if pressed then y = y + 1 end
-  setColor(COLOR.black, 0.9)
-  love.graphics.rectangle("fill", x - 1, y - 1, w + 2, h + 2)
-  setColor(face)
-  love.graphics.rectangle("fill", x, y, w, h)
+  local t = on and self.theme or DISABLED
+  local x, y, w, h = self.x, self.y + (pressed and 1 or 0), self.w, self.h
+  setColor(C.black, 0.85)
+  lg.rectangle("fill", x - 1, y - 1, w + 2, h + (pressed and 2 or 3))
+  setColor(hover and t.hover or t.face)
+  lg.rectangle("fill", x, y, w, h)
   setColor(pressed and t.dark or t.light)
-  love.graphics.rectangle("fill", x, y, w, 1)
-  love.graphics.rectangle("fill", x, y, 1, h)
+  lg.rectangle("fill", x, y, w, 1)
+  lg.rectangle("fill", x, y, 1, h)
   setColor(pressed and t.light or t.dark)
-  love.graphics.rectangle("fill", x, y + h - 2, w, 2)
-  love.graphics.rectangle("fill", x + w - 1, y, 1, h)
-  local tw = textWidth(self.label, self.scale)
-  local th = 5 * self.scale
-  drawText(self.label, x + floor((w - tw) / 2), y + floor((h - th) / 2), self.scale, t.text)
+  lg.rectangle("fill", x, y + h - 1, w, 1)
+  lg.rectangle("fill", x + w - 1, y, 1, h)
+  local s = self.scale
+  local tx = x + floor((w - textWidth(self.label, s)) / 2) + floor(s / 2)
+  local ty = y + floor((h - 5 * s) / 2)
+  text(self.label, tx, ty, s, t.text)
+end
+
+local function createUi()
+  return {
+    roll = Button.new("ROLL", THEME.green, 2),
+    buy = Button.new("BUY", THEME.gold, 2),
+    start = Button.new("START WAVE", THEME.red, 2),
+    speed = Button.new("1X", THEME.steel, 1),
+    pause = Button.new("II", THEME.steel, 1),
+    upgrade = Button.new("UPGRADE", THEME.green, 1),
+    sell = Button.new("SELL", THEME.gold, 1),
+    move = Button.new("MOVE", THEME.steel, 1),
+    resume = Button.new("RESUME", THEME.green, 2),
+    newRun = Button.new("NEW RUN", THEME.red, 2),
+    quit = Button.new("QUIT", THEME.steel, 2),
+  }
+end
+
+local function layoutUi(u, vh)
+  local py = vh - PANEL_H
+  u.roll:place(12, py + 22, 56, 26)
+  u.buy:place(176, py + 22, 56, 26)
+  u.start:place(248, py + 30, 88, 24)
+  u.speed:place(340, py + 30, 19, 24)
+  u.pause:place(362, py + 30, 18, 24)
+  local cx, cy = floor(VW / 2), floor(vh / 2)
+  u.resume:place(cx - 55, cy - 24, 110, 20)
+  u.newRun:place(cx - 55, cy, 110, 20)
+  u.quit:place(cx - 55, cy + 24, 110, 20)
 end
 
 local Turret = {}
 Turret.__index = Turret
 
-function Turret.new(def, slot)
-  local rest = slot.side == "left" and 0 or pi
-  return setmetatable({
-    def = def,
-    slot = slot,
-    x = slot.cx,
-    y = slot.cy - 2,
-    angle = rest,
-    rest = rest,
-    cooldown = 0.25,
-    recoil = 0,
-    kick = 0,
-    flash = 0,
+function Turret.new(def, slot, level, spent, kills)
+  local rest = slot.side == 1 and 0 or pi
+  local t = setmetatable({
+    def = def, slot = slot, x = slot.cx, y = slot.cy - 1, angle = rest, rest = rest,
+    level = 1, spent = spent or def.cost, kills = kills or 0,
+    cooldown = 0.3, recoil = 0, kick = 0, flash = 0, retarget = 0, target = nil, targetId = 0,
+    damage = 0, fireDelay = 1, range = 0, range2 = 0,
   }, Turret)
+  t:setLevel(level or 1)
+  return t
 end
 
-function Turret:findTarget(zombies)
-  local range2 = self.def.range * self.def.range
-  local best
-  local bestY = -math.huge
-  for i = 1, #zombies do
-    local z = zombies[i]
-    if z.y > 2 then
-      local dx, dy = z.x - self.x, z.y - self.y
-      if dx * dx + dy * dy <= range2 and z.y > bestY then
-        best, bestY = z, z.y
+function Turret:setLevel(level)
+  self.level = clamp(floor(level), 1, MAX_LEVEL)
+  local d, k = self.def, self.level - 1
+  self.damage = d.damage * (1 + 0.5 * k)
+  self.fireDelay = d.cooldown * (1 - 0.12 * k)
+  self.range = d.range * (1 + 0.1 * k)
+  self.range2 = self.range * self.range
+end
+
+function Turret:upgradeCost()
+  if self.level >= MAX_LEVEL then return nil end
+  return floor(self.def.cost * (0.6 + 0.4 * (self.level - 1)) + 0.5)
+end
+
+function Turret:sellValue()
+  return floor(self.spent * SELL_RATE)
+end
+
+function Turret:update(dt, game)
+  self.cooldown = max(0, self.cooldown - dt)
+  self.flash = max(0, self.flash - dt)
+  self.recoil = max(0, self.recoil - 30 * dt)
+  self.kick = max(0, self.kick - 3 * dt)
+  local target = self.target
+  if target and (not target.alive or target.id ~= self.targetId) then target = nil end
+  self.retarget = self.retarget - dt
+  if game.state == "wave" and (target == nil or self.retarget <= 0) then
+    self.retarget = 0.12
+    target = game:findTarget(self.x, self.y, self.range2)
+  end
+  if target then
+    local dx, dy = target.x - self.x, target.y - self.y
+    local d2 = dx * dx + dy * dy
+    if d2 > self.range2 then
+      target = nil
+    else
+      local lead = sqrt(d2) / self.def.speed
+      local desired = atan2(dy + target.vy * lead, dx + target.vx * lead)
+      local diff = angleDiff(self.angle, desired)
+      local turn = 10 * dt
+      self.angle = self.angle + clamp(diff, -turn, turn)
+      if self.cooldown <= 0 and abs(diff) < 0.12 then
+        self.cooldown = self.fireDelay * rnd(0.92, 1.08)
+        game:fire(self)
       end
     end
   end
-  return best
-end
-
-function Turret:update(dt, world)
-  local def = self.def
-  self.cooldown = max(0, self.cooldown - dt)
-  self.flash = max(0, self.flash - dt)
-  self.recoil = max(0, self.recoil - 24 * dt)
-  self.kick = max(0, self.kick - 2.4 * dt)
-  local target
-  if world.state == "wave" then target = self:findTarget(world.zombies) end
-  if target then
-    local dx, dy = target.x - self.x, target.y - self.y
-    local dist = sqrt(dx * dx + dy * dy)
-    local t = dist / def.bulletSpeed
-    local desired = atan2(target.y + target.vy * t - self.y, target.x + target.vx * t - self.x)
-    local diff = angleDiff(self.angle, desired)
-    self.angle = self.angle + clamp(diff, -TURN_SPEED * dt, TURN_SPEED * dt)
-    if self.cooldown <= 0 and abs(angleDiff(self.angle, desired)) < 0.1 then
-      self.cooldown = def.cooldown * rndRange(0.9, 1.1)
-      world:fire(self)
-    end
-  else
+  if not target then
     local diff = angleDiff(self.angle, self.rest)
-    self.angle = self.angle + clamp(diff, -3 * dt, 3 * dt)
+    self.angle = self.angle + clamp(diff, -2.5 * dt, 2.5 * dt)
   end
+  self.angle = (self.angle + pi) % TAU - pi
+  self.target = target
+  self.targetId = target and target.id or 0
 end
 
 function Turret:draw()
   local def = self.def
-  local dirx, diry = cos(self.angle), sin(self.angle)
-  local px = self.x - dirx * self.recoil
-  local py = self.y - diry * self.recoil
-  drawWeapon(def, px, py, self.angle, self.kick, 1)
+  local ca, sa = cos(self.angle), sin(self.angle)
+  local px, py = self.x - ca * self.recoil, self.y - sa * self.recoil
+  local right = ca >= 0
+  lg.setColor(1, 1, 1, 1)
+  spr(SP[def.sprite], snap(px), snap(py), self.angle + (right and -self.kick or self.kick), 1, right and 1 or -1, def.pivotX, def.pivotY)
   if self.flash > 0 then
-    local idx = clamp(floor((FLASH_TIME - self.flash) / (FLASH_TIME / 3)) + 1, 1, 3)
-    local sprite = Assets.flashes[idx]
-    love.graphics.setColor(1, 1, 1, 1)
-    drawSprite(sprite, px + dirx * (def.muzzle + 2), py + diry * (def.muzzle + 2), self.angle, 1, 1, sprite.w / 2, sprite.h / 2)
+    local f = FLASH[clamp(floor((FLASH_TIME - self.flash) / FLASH_TIME * 3) + 1, 1, 3)]
+    spr(f, snap(px + ca * (def.muzzle + 2)), snap(py + sa * (def.muzzle + 2)), self.angle, 1, 1, f.w / 2, f.h / 2)
   end
 end
 
 local function createSlots()
   local slots = {}
-  local rows = { 44, 92, 140 }
-  for i = 1, #rows do
-    slots[#slots + 1] = { cx = 36, cy = rows[i], side = "left", turret = nil }
-    slots[#slots + 1] = { cx = 284, cy = rows[i], side = "right", turret = nil }
+  local centers = slotCenters()
+  for i = 1, #centers do
+    slots[i] = { index = i, cx = centers[i].x, cy = centers[i].y, side = centers[i].side, turret = nil }
   end
   return slots
-end
-
-local function slotContains(slot, x, y)
-  local half = SLOT_SIZE / 2
-  return x >= slot.cx - half and x < slot.cx + half and y >= slot.cy - half and y < slot.cy + half
-end
-
-local function byDepth(a, b)
-  return a.y < b.y
 end
 
 local Game = {}
 Game.__index = Game
 
-function Game.new(interface)
+function Game.new(interface, viewport, metaData)
   local self = setmetatable({}, Game)
-  self.ui = interface
+  self.ui, self.view, self.meta = interface, viewport, metaData
   self.slots = createSlots()
+  self.zombies, self.bullets, self.particles, self.floaters, self.turrets = {}, {}, {}, {}, {}
+  self.decals, self.decalHead = {}, 0
+  for i = 1, MAX_DECALS do self.decals[i] = { life = 0, x = 0, y = 0, sprite = nil, flip = 1 } end
+  self.bucketCount = ceil((WORLD_H + 64) / BUCKET) + 1
+  self.buckets = {}
+  for i = 1, self.bucketCount do self.buckets[i] = { n = 0, old = 0 } end
+  self.nextId = 0
+  self.clock, self.realClock, self.acc = 0, 0, 0
+  self.speed = metaData.speed == 2 and 2 or 1
+  self.paused = false
+  self.saveTimer, self.savedFlash, self.runDirty, self.metaDirty = 0, 0, false, false
+  self.confirmNew = 0
+  self.camY, self.camTarget = 0, 0
+  self.panelVisible, self.panelX, self.panelY, self.panelW, self.panelH = false, 0, 0, 0, 0
   self:reset()
   return self
 end
 
-function Game:reset()
-  self.bullets = self.bullets or {}
-  self.particles = self.particles or {}
-  releaseAll(self.bullets, bulletPool)
-  releaseAll(self.particles, particlePool)
-  self.zombies, self.turrets, self.floaters = {}, {}, {}
-  for i = 1, #self.slots do self.slots[i].turret = nil end
-  self.state = "build"
-  self.money = START_MONEY
-  self.wave = 1
-  self.life = MAX_LIFE
-  self.hand = nil
-  self.offer = nil
-  self.rollResult = nil
-  self.rolling = 0
-  self.spawnQueue = 0
-  self.spawnTimer = 0
-  self.clock = 0
-  self.overClock = 0
-  self.shake = 0
-  self.toast = nil
-  self.banner = nil
-  self.moneyFlash = 0
-  self.moneyFlashColor = COLOR.white
-  self.paused = false
+function Game:clearEntities()
+  for i = #self.zombies, 1, -1 do
+    local z = self.zombies[i]
+    z.alive = false
+    zombiePool.put(z)
+    self.zombies[i] = nil
+  end
+  for i = #self.bullets, 1, -1 do
+    self.bullets[i].owner = nil
+    bulletPool.put(self.bullets[i])
+    self.bullets[i] = nil
+  end
+  for i = #self.particles, 1, -1 do
+    particlePool.put(self.particles[i])
+    self.particles[i] = nil
+  end
+  for i = #self.floaters, 1, -1 do
+    floaterPool.put(self.floaters[i])
+    self.floaters[i] = nil
+  end
+  for i = 1, MAX_DECALS do
+    self.decals[i].life = 0
+    self.decals[i].sprite = nil
+  end
+  for i = 1, self.bucketCount do
+    local b = self.buckets[i]
+    for j = max(b.n, b.old), 1, -1 do b[j] = nil end
+    b.n, b.old = 0, 0
+  end
 end
 
-function Game:notify(text)
-  self.toast = { text = text, life = 1.8 }
+function Game:reset()
+  self:clearEntities()
+  for i = 1, #self.slots do self.slots[i].turret = nil end
+  for i = #self.turrets, 1, -1 do
+    self.turrets[i].target = nil
+    self.turrets[i] = nil
+  end
+  self.state = "build"
+  self.money, self.wave, self.life, self.kills = START_MONEY, 1, MAX_LIFE, 0
+  self.hand, self.selected, self.offer = nil, nil, nil
+  self.rolling, self.rollResult, self.rollShow, self.rollTick, self.reveal = 0, nil, 1, 0, 0
+  self.spawnQueue, self.spawnTimer, self.waveTotal, self.waveSnapshot = 0, 0, 0, nil
+  self.overClock, self.shake, self.hurtFlash, self.barricadeHit = 0, 0, 0, 0
+  self.moneyFlash, self.moneyFlashColor = 0, C.white
+  self.toastText, self.toastLife = nil, 0
+  self.bannerText, self.bannerSub, self.bannerLife, self.bannerMax, self.bannerColor = nil, nil, 0, 1, C.white
+end
+
+function Game:newRun()
+  self:reset()
+  removeSave(SAVE_RUN)
+  self.paused = false
+  self.confirmNew = 0
+  self:setCamera(self:maxCam(), true)
+  self:notify("NEW RUN - GOOD LUCK!")
+end
+
+function Game:viewH()
+  return self.view.vh - PANEL_H
+end
+
+function Game:maxCam()
+  return max(0, WORLD_H - self:viewH())
+end
+
+function Game:setCamera(v, instant)
+  self.camTarget = clamp(v, 0, self:maxCam())
+  if instant then self.camY = self.camTarget end
+end
+
+function Game:onResize()
+  layoutUi(self.ui, self.view.vh)
+  self.camTarget = clamp(self.camTarget, 0, self:maxCam())
+  self.camY = clamp(self.camY, 0, self:maxCam())
+end
+
+function Game:serializeRun()
+  local hand = self.hand
+  local money = self.money
+  if hand and not hand.origin then money = money + hand.spent end
+  local lines = { "v=" .. SAVE_VERSION, "money=" .. int(money), "wave=" .. int(self.wave), "life=" .. int(self.life), "kills=" .. int(self.kills) }
+  for i = 1, #self.slots do
+    local t = self.slots[i].turret
+    if t then
+      lines[#lines + 1] = "t=" .. i .. "," .. t.def.id .. "," .. t.level .. "," .. int(t.spent) .. "," .. int(t.kills)
+    elseif hand and hand.origin == self.slots[i] then
+      lines[#lines + 1] = "t=" .. i .. "," .. hand.def.id .. "," .. hand.level .. "," .. int(hand.spent) .. "," .. int(hand.kills or 0)
+    end
+  end
+  return sealed(lines)
+end
+
+function Game:applyRun(fields, list)
+  local money = num(fields.money, 0, 1e9, nil)
+  local wave = num(fields.wave, 1, 100000, nil)
+  local life = num(fields.life, 1, MAX_LIFE, nil)
+  if not (money and wave and life) then return false end
+  self:reset()
+  self.money, self.wave, self.life = money, wave, life
+  self.kills = num(fields.kills, 0, 1e12, 0)
+  for i = 1, #list do
+    local s, id, lv, sp, kl = list[i]:match("^(%d+),(%a+),(%d+),(%d+),(%d+)$")
+    local slot = s and self.slots[tonumber(s)]
+    local def = id and WEAPON_BY_ID[id]
+    if slot and def and not slot.turret then
+      local t = Turret.new(def, slot, num(lv, 1, MAX_LEVEL, 1), num(sp, 0, 1e9, def.cost), num(kl, 0, 1e12, 0))
+      slot.turret = t
+      self.turrets[#self.turrets + 1] = t
+    end
+  end
+  return true
+end
+
+function Game:saveRun()
+  self.runDirty = false
+  self.saveTimer = 0.6
+  if self.state == "over" then return true end
+  local content = (self.state == "wave" and self.waveSnapshot) or self:serializeRun()
+  if writeSave(SAVE_RUN, content) then
+    self.savedFlash = 1.2
+    return true
+  end
+  self:notify("SAVE FAILED")
+  return false
+end
+
+function Game:saveMetaNow()
+  self.metaDirty = false
+  if not writeSave(SAVE_META, serializeMeta(self.meta)) then self:notify("SAVE FAILED") end
+end
+
+function Game:markDirty()
+  if self.state == "build" then self.runDirty = true end
+end
+
+function Game:autosave(dt)
+  self.saveTimer = self.saveTimer - dt
+  if self.saveTimer > 0 then return end
+  if self.runDirty then self:saveRun() end
+  if self.metaDirty then self:saveMetaNow() end
+end
+
+function Game:notify(msg)
+  self.toastText, self.toastLife = msg, 1.8
+end
+
+function Game:banner(msg, sub, color, duration)
+  self.bannerText, self.bannerSub, self.bannerColor = msg, sub, color or C.white
+  self.bannerLife, self.bannerMax = duration or 1.8, duration or 1.8
 end
 
 function Game:addMoney(delta)
   self.money = self.money + delta
-  self.moneyFlash = 0.4
-  self.moneyFlashColor = delta >= 0 and COLOR.green or COLOR.red
+  self.moneyFlash = 0.35
+  self.moneyFlashColor = delta >= 0 and C.green or C.red
 end
 
-function Game:addFloater(text, x, y, color)
-  if #self.floaters >= MAX_FLOATERS then removeAt(self.floaters, 1) end
-  self.floaters[#self.floaters + 1] = { text = text, x = x, y = y, life = 0.9, color = color }
+function Game:addFloater(msg, x, y, color)
+  local list = self.floaters
+  if #list >= MAX_FLOATERS then
+    local old = list[1]
+    swapRemove(list, 1)
+    floaterPool.put(old)
+  end
+  local f = floaterPool.get()
+  f.text, f.x, f.y, f.life, f.color = msg, x, y, 0.9, color
+  list[#list + 1] = f
 end
 
-function Game:emit(x, y, vx, vy, life, size, color, gravity, floorY)
-  if #self.particles >= MAX_PARTICLES then return end
-  local p = particlePool.acquire()
-  p.x, p.y, p.vx, p.vy = x, y, vx, vy
-  p.life, p.max, p.size = life, life, size
-  p.color, p.grav, p.floorY = color, gravity, floorY
-  self.particles[#self.particles + 1] = p
+function Game:emit(x, y, vx, vy, life, size, color, grav, floorY)
+  local list = self.particles
+  if #list >= MAX_PARTICLES then return end
+  local p = particlePool.get()
+  p.x, p.y, p.vx, p.vy, p.life, p.max = x, y, vx, vy, life, life
+  p.size, p.color, p.grav, p.floorY = size, color, grav, floorY
+  list[#list + 1] = p
 end
 
-function Game:burst(x, y, count, speed, floorY)
+function Game:blood(x, y, count, speed, floorY)
   for _ = 1, count do
-    local a = rndRange(0, 2 * pi)
-    local s = rndRange(0.3, 1) * speed
-    self:emit(x, y, cos(a) * s, sin(a) * s - 20, rndRange(0.35, 0.8), rndInt(1, 2), BLOOD[rndInt(1, #BLOOD)], 180, floorY)
+    local a, s = rnd(0, TAU), rnd(0.3, 1) * speed
+    self:emit(x, y, cos(a) * s, sin(a) * s - 25, rnd(0.3, 0.8), rndInt(1, 2), BLOOD[rndInt(1, #BLOOD)], 200, floorY)
   end
 end
 
+function Game:puff(x, y, count, colors, speed)
+  for _ = 1, count do
+    local a, s = rnd(0, TAU), rnd(0.2, 1) * speed
+    self:emit(x, y, cos(a) * s, sin(a) * s * 0.6 - 10, rnd(0.3, 0.7), 1, colors[rndInt(1, #colors)], 40, nil)
+  end
+end
+
+function Game:addDecal(x, y)
+  self.decalHead = self.decalHead % MAX_DECALS + 1
+  local d = self.decals[self.decalHead]
+  d.x, d.y, d.life = snap(x), snap(y), DECAL_LIFE
+  d.sprite = SPLATS[rndInt(1, #SPLATS)]
+  d.flip = lm.random() < 0.5 and -1 or 1
+end
+
 function Game:hint()
-  if self.state ~= "build" then return nil end
-  if self.hand then return "CLICK A SAND SLOT TO PLACE" end
+  if self.hand then return "CLICK A SAND SLOT TO PLACE IT" end
   if self.rolling > 0 then return "ROLLING..." end
   if self.offer then
     if self.money >= self.offer.cost then return "BUY IT OR ROLL AGAIN" end
-    return "TOO EXPENSIVE - ROLL AGAIN"
+    return "TOO PRICEY - ROLL AGAIN"
   end
   if #self.turrets == 0 then return "ROLL THE LUCKY BOX" end
   return "READY? START THE WAVE"
 end
 
-function Game:syncUi()
-  local interface = self.ui
-  local build = self.state == "build"
-  interface.start.enabled = build and #self.turrets > 0 and self.hand == nil
-  interface.roll.enabled = build and self.rolling <= 0 and self.hand == nil
-  interface.buy.enabled = build and self.offer ~= nil and self.hand == nil and self.money >= self.offer.cost
+function Game:slotAt(wx, wy)
+  for i = 1, #self.slots do
+    local s = self.slots[i]
+    local dx, dy = wx - s.cx, wy - s.cy
+    if dx * dx + dy * dy <= SLOT_R * SLOT_R then return s end
+  end
+  return nil
+end
+
+function Game:minimapRect()
+  return VW - 20, TOP_H + 4, 16, self:viewH() - TOP_H - 8
+end
+
+function Game:onMinimap(x, y)
+  local mx, my, mw, mh = self:minimapRect()
+  return mh >= 24 and x >= mx - 2 and x < mx + mw + 2 and y >= my and y < my + mh
+end
+
+function Game:minimapJump(y)
+  local _, my, _, mh = self:minimapRect()
+  if mh < 24 then return end
+  self:setCamera((y - my) / mh * WORLD_H - self:viewH() / 2, true)
+end
+
+function Game:overPanel(x, y)
+  return self.panelVisible and x >= self.panelX and x < self.panelX + self.panelW and y >= self.panelY and y < self.panelY + self.panelH
+end
+
+function Game:isWorldPoint(x, y)
+  return y > TOP_H and y < self:viewH() and not self:onMinimap(x, y) and not self:overPanel(x, y)
+end
+
+function Game:setPaused(v)
+  if self.state == "over" then v = false end
+  self.paused = v
+  self.confirmNew = 0
+end
+
+function Game:toggleSpeed()
+  if self.state == "over" then return end
+  self.speed = self.speed == 2 and 1 or 2
+  self.meta.speed = self.speed
+  self.metaDirty = true
+  self:notify(self.speed == 2 and "FAST FORWARD" or "NORMAL SPEED")
 end
 
 function Game:roll()
-  if self.state ~= "build" or self.rolling > 0 then return end
+  if self.state == "over" or self.rolling > 0 then return end
   if self.hand then
     self:notify("PLACE YOUR WEAPON FIRST")
     return
@@ -862,48 +1561,116 @@ function Game:roll()
   self.offer = nil
   self.rollResult = pickWeapon()
   self.rolling = ROLL_TIME
+  self.rollTick = 0
 end
 
 function Game:buy()
   local offer = self.offer
-  if self.state ~= "build" or not offer or self.hand then return end
+  if self.state == "over" or self.hand then return end
+  if not offer then
+    self:notify(self.rolling > 0 and "WAIT FOR THE ROLL" or "ROLL FIRST")
+    return
+  end
   if self.money < offer.cost then
-    self:notify("NOT ENOUGH MONEY")
+    self:notify("NOT ENOUGH CASH")
     return
   end
   self:addMoney(-offer.cost)
-  self.hand = offer
+  self.hand = { def = offer, level = 1, spent = offer.cost, origin = nil, kills = 0 }
   self.offer = nil
-  self:notify("CLICK A SAND SLOT")
+  self.selected = nil
+  self:notify("PICK A SAND SLOT")
 end
 
 function Game:cancelHand()
-  if self.state ~= "build" or not self.hand then return false end
-  self:addMoney(self.hand.cost)
+  local hand = self.hand
+  if not hand then return false end
   self.hand = nil
-  self:notify("REFUNDED")
+  if hand.origin and not hand.origin.turret then
+    self:placeTurret(hand.origin, hand)
+  else
+    self:addMoney(hand.spent)
+    self:notify("REFUNDED")
+    self:markDirty()
+  end
   return true
 end
 
-function Game:useSlot(slot)
+function Game:placeTurret(slot, hand)
+  local t = Turret.new(hand.def, slot, hand.level, hand.spent, hand.kills)
+  slot.turret = t
+  self.turrets[#self.turrets + 1] = t
+  self:puff(slot.cx, slot.cy + 4, 10, DUST, 40)
+  self:markDirty()
+  return t
+end
+
+function Game:removeTurret(t)
+  removeValue(self.turrets, t)
+  if t.slot.turret == t then t.slot.turret = nil end
+  t.target = nil
+  if self.selected == t then self.selected = nil end
+end
+
+function Game:clickSlot(slot)
   if self.hand then
     if slot.turret then
       self:notify("SLOT TAKEN")
       return
     end
-    local turret = Turret.new(self.hand, slot)
-    slot.turret = turret
-    self.turrets[#self.turrets + 1] = turret
+    local hand = self.hand
     self.hand = nil
-  elseif slot.turret then
-    self.hand = slot.turret.def
-    removeValue(self.turrets, slot.turret)
-    slot.turret = nil
+    self:placeTurret(slot, hand)
+    return
+  end
+  if slot.turret then
+    self.selected = (self.selected == slot.turret) and nil or slot.turret
+  else
+    self.selected = nil
   end
 end
 
+function Game:upgradeSelected()
+  local t = self.selected
+  if not t or self.state == "over" then return end
+  local cost = t:upgradeCost()
+  if not cost then
+    self:notify("MAX LEVEL")
+    return
+  end
+  if self.money < cost then
+    self:notify("NOT ENOUGH CASH")
+    return
+  end
+  self:addMoney(-cost)
+  t.spent = t.spent + cost
+  t:setLevel(t.level + 1)
+  self:puff(t.x, t.y, 14, SPARK, 50)
+  self:addFloater(L.levelUp(t.level), t.x, t.y - 14, C.green)
+  self:markDirty()
+end
+
+function Game:sellSelected()
+  local t = self.selected
+  if not t or self.state == "over" then return end
+  local value = t:sellValue()
+  self:removeTurret(t)
+  self:addMoney(value)
+  self:addFloater(L.plus(value), t.x, t.y - 12, C.gold)
+  self:puff(t.x, t.y, 10, DUST, 40)
+  self:markDirty()
+end
+
+function Game:moveSelected()
+  local t = self.selected
+  if not t or self.hand or self.state == "over" then return end
+  self:removeTurret(t)
+  self.hand = { def = t.def, level = t.level, spent = t.spent, origin = t.slot, kills = t.kills }
+  self:notify("PICK A NEW SLOT")
+end
+
 function Game:startWave()
-  if self.state ~= "build" then return end
+  if self.state ~= "build" or self.paused then return end
   if self.hand then
     self:notify("PLACE YOUR WEAPON FIRST")
     return
@@ -912,166 +1679,222 @@ function Game:startWave()
     self:notify("PLACE A WEAPON FIRST")
     return
   end
+  self.waveSnapshot = self:serializeRun()
   self.state = "wave"
-  self.spawnQueue = WAVE.count(self.wave)
-  self.spawnTimer = 1.2
-  self.banner = { text = bannerLabel(self.wave), life = 1.6, max = 1.6, scale = 4, color = COLOR.white }
+  self.waveTotal = waveCount(self.wave)
+  self.spawnQueue = self.waveTotal
+  self.spawnTimer = 1
+  self:banner(L.wave(self.wave), nil, C.cream, 1.6)
+  self:saveRun()
 end
 
 function Game:finishWave()
-  local bonus = WAVE.bonus(self.wave)
+  local bonus = waveBonus(self.wave)
   self:addMoney(bonus)
-  self:addFloater(bonusLabel(bonus), 160, 110, COLOR.gold)
-  self.banner = { text = "WAVE CLEARED", life = 2, max = 2, scale = 3, color = COLOR.green }
+  self:banner(L.cleared(self.wave), L.plus(bonus), C.green, 2.2)
+  if self.wave > self.meta.best then self.meta.best = self.wave end
   self.wave = self.wave + 1
   self.state = "build"
+  self.waveSnapshot = nil
+  self.metaDirty = true
+  self:saveRun()
+  self:saveMetaNow()
 end
 
-function Game:click(x, y, button)
-  if self.state == "over" then
-    if self.overClock > 0.7 then self:reset() end
-    return
-  end
-  if button == 2 then
-    self:cancelHand()
-    return
-  end
-  if button ~= 1 or self.state ~= "build" then return end
-  local interface = self.ui
-  if interface.start:contains(x, y) then
-    self:startWave()
-    return
-  end
-  if interface.roll:contains(x, y) then
-    self:roll()
-    return
-  end
-  if interface.buy:contains(x, y) then
-    self:buy()
-    return
-  end
-  for i = 1, #self.slots do
-    if slotContains(self.slots[i], x, y) then
-      self:useSlot(self.slots[i])
-      return
-    end
-  end
+function Game:gameOver()
+  if self.state == "over" then return end
+  self.state = "over"
+  self.overClock = 0
+  self.hand, self.selected, self.offer = nil, nil, nil
+  self.rolling, self.rollResult = 0, nil
+  self.waveSnapshot = nil
+  self.bannerText = nil
+  self.paused = false
+  removeSave(SAVE_RUN)
+  self.metaDirty = true
+  self:saveMetaNow()
 end
 
 function Game:spawnZombie()
-  local w = self.wave
-  local hp = WAVE.health(w)
-  self.zombies[#self.zombies + 1] = {
-    x = rndRange(ROAD.left + 14, ROAD.right - 14),
-    y = -10,
-    vx = 0,
-    vy = 0,
-    hp = hp,
-    maxHp = hp,
-    speed = WAVE.speed(w) * rndRange(0.8, 1.25),
-    t = rndRange(0, 6),
-    phase = rndRange(0, 6.28),
-    freq = rndRange(0.8, 2),
-    amp = rndRange(3, 10),
-    flash = 0,
-    frame = 1,
-  }
+  if #self.zombies >= MAX_ZOMBIES then return false end
+  local zt = pickZombieType(self.wave)
+  local z = zombiePool.get()
+  self.nextId = self.nextId + 1
+  local hp = max(1, floor(waveHp(self.wave) * zt.hp + 0.5))
+  z.id, z.alive, z.type = self.nextId, true, zt
+  z.x, z.y, z.vx, z.vy = rnd(ROAD_L + 16, ROAD_R - 16), -14, 0, 0
+  z.hp, z.maxHp = hp, hp
+  z.speed = waveSpeed(self.wave) * zt.speed * rnd(0.85, 1.15)
+  z.t, z.phase, z.freq, z.amp = rnd(0, 6), rnd(0, TAU), rnd(0.7, 1.8), rnd(3, 9) * zt.sway
+  z.flash, z.step = 0, rnd(0, 10)
+  self.zombies[#self.zombies + 1] = z
+  return true
 end
 
 function Game:updateSpawning(dt)
   if self.spawnQueue <= 0 then return end
   self.spawnTimer = self.spawnTimer - dt
   if self.spawnTimer <= 0 then
-    self:spawnZombie()
-    self.spawnQueue = self.spawnQueue - 1
-    self.spawnTimer = WAVE.interval(self.wave) * rndRange(0.6, 1.4)
+    if self:spawnZombie() then
+      self.spawnQueue = self.spawnQueue - 1
+      self.spawnTimer = waveInterval(self.wave) * rnd(0.6, 1.4)
+    else
+      self.spawnTimer = 0.25
+    end
   end
 end
 
-function Game:damageBox()
-  self.life = self.life - 1
-  self.shake = 0.3
-  self:addFloater("-1 HP", rndRange(110, 210), ROAD.bottom - 6, COLOR.red)
-  for _ = 1, 6 do
-    self:emit(rndRange(110, 210), BOX.y, rndRange(-30, 30), rndRange(-60, -20), rndRange(0.3, 0.6), 2, { 150, 100, 54 }, 200, BOX.y + 4)
-  end
-  if self.life <= 0 then
-    self.life = 0
-    self.state = "over"
-    self.overClock = 0
-    self.banner = nil
-    self.toast = nil
-  end
+function Game:damageBarricade(z)
+  local dmg = z.type.damage
+  self.life = max(0, self.life - dmg)
+  self.shake, self.hurtFlash, self.barricadeHit = 0.25, 0.35, 0.2
+  self:addFloater(L.hurt(dmg), z.x, BARRICADE_Y - 8, C.red)
+  self:puff(z.x, BARRICADE_Y + 6, 8, WOOD, 60)
+  self:blood(z.x, z.y, 6, 60, BARRICADE_Y)
+  if self.life <= 0 then self:gameOver() end
 end
 
 function Game:updateZombies(dt)
   local zs = self.zombies
-  for i = #zs, 1, -1 do
+  local limit = BARRICADE_Y - 2
+  for i = 1, #zs do
     local z = zs[i]
-    z.t = z.t + dt
-    z.vx = cos(z.t * z.freq + z.phase) * z.amp
-    z.vy = z.speed
-    z.x = clamp(z.x + z.vx * dt, ROAD.left + 10, ROAD.right - 10)
-    z.y = z.y + z.vy * dt
-    z.flash = max(0, z.flash - dt)
-    z.frame = floor(z.t * 3.2) % 2 + 1
-    if z.y >= ROAD.bottom - 4 then
-      removeAt(zs, i)
-      self:damageBox()
+    if z.alive then
+      z.t = z.t + dt
+      z.vx = cos(z.t * z.freq + z.phase) * z.amp
+      z.vy = z.speed
+      z.x = clamp(z.x + z.vx * dt, ROAD_L + 10, ROAD_R - 10)
+      z.y = z.y + z.vy * dt
+      z.step = z.step + z.vy * dt
+      if z.flash > 0 then z.flash = z.flash - dt end
+      if z.y + z.type.hitH >= limit then
+        z.alive = false
+        self:damageBarricade(z)
+      end
     end
   end
 end
 
-function Game:hitZombie(z, damage, x, y)
-  z.hp = z.hp - damage
-  z.flash = 0.08
-  self:burst(x, y, 4, 60, z.y + 7)
-  if z.hp <= 0 then
-    removeValue(self.zombies, z)
-    self:burst(z.x, z.y, 12, 90, z.y + 7)
-    self:addMoney(BOUNTY)
-    self:addFloater(bonusLabel(BOUNTY), z.x, z.y - 8, COLOR.gold)
+function Game:sweepZombies()
+  local zs = self.zombies
+  local n, j = #zs, 0
+  for i = 1, n do
+    local z = zs[i]
+    if z.alive then
+      j = j + 1
+      zs[j] = z
+    else
+      zombiePool.put(z)
+    end
   end
+  for i = j + 1, n do zs[i] = nil end
+end
+
+function Game:bucketIndex(y)
+  return clamp(floor((y + 32) / BUCKET) + 1, 1, self.bucketCount)
+end
+
+function Game:rebuildBuckets()
+  local buckets = self.buckets
+  for i = 1, self.bucketCount do
+    local b = buckets[i]
+    b.old, b.n = b.n, 0
+  end
+  local zs = self.zombies
+  for i = 1, #zs do
+    local z = zs[i]
+    if z.alive then
+      local b = buckets[self:bucketIndex(z.y)]
+      b.n = b.n + 1
+      b[b.n] = z
+    end
+  end
+  for i = 1, self.bucketCount do
+    local b = buckets[i]
+    for j = b.n + 1, b.old do b[j] = nil end
+  end
+end
+
+function Game:findTarget(x, y, range2)
+  local best, bestY = nil, -huge
+  local zs = self.zombies
+  for i = 1, #zs do
+    local z = zs[i]
+    if z.alive and z.y > -4 and z.y > bestY then
+      local dx, dy = z.x - x, z.y - y
+      if dx * dx + dy * dy <= range2 then best, bestY = z, z.y end
+    end
+  end
+  return best
 end
 
 function Game:fire(turret)
   local def = turret.def
-  local a = turret.angle + rndRange(-def.spread, def.spread)
-  local dx, dy = cos(a), sin(a)
-  local b = bulletPool.acquire()
-  b.x = turret.x + dx * (def.muzzle + 2)
-  b.y = turret.y + dy * (def.muzzle + 2)
-  b.dx, b.dy, b.angle = dx, dy, a
-  b.speed = def.bulletSpeed
-  b.damage = def.damage
-  b.dist = 0
-  b.maxDist = def.range * 1.6
-  self.bullets[#self.bullets + 1] = b
-  turret.recoil = def.recoil
-  turret.kick = def.kick
-  turret.flash = FLASH_TIME
-  local side = dx >= 0 and -1 or 1
-  self:emit(turret.x, turret.y, side * rndRange(10, 40), rndRange(-80, -50), 0.7, 1, BRASS, 260, turret.y + 10)
+  local bullets = self.bullets
+  for p = 1, def.pellets do
+    if #bullets >= MAX_BULLETS then break end
+    local a
+    if def.pellets > 1 then
+      a = turret.angle + def.spread * ((p - 1) / (def.pellets - 1) * 2 - 1) + rnd(-0.04, 0.04)
+    else
+      a = turret.angle + rnd(-def.spread, def.spread)
+    end
+    local dx, dy = cos(a), sin(a)
+    local b = bulletPool.get()
+    b.x, b.y = turret.x + dx * def.muzzle, turret.y + dy * def.muzzle
+    b.dx, b.dy, b.angle = dx, dy, a
+    b.speed = def.speed * (def.pellets > 1 and rnd(0.85, 1.1) or 1)
+    b.damage, b.pierce, b.lastHit = turret.damage, def.pierce, 0
+    b.dist, b.maxDist = 0, turret.range * 1.25
+    b.small, b.owner = def.pellets > 1, turret
+    bullets[#bullets + 1] = b
+  end
+  turret.recoil, turret.kick, turret.flash = def.recoil, def.kick, FLASH_TIME
+  local side = cos(turret.angle) >= 0 and -1 or 1
+  self:emit(turret.x, turret.y, side * rnd(15, 40), rnd(-70, -40), 0.9, 1, BRASS, 240, turret.y + 8)
+end
+
+function Game:killZombie(z, owner)
+  z.alive = false
+  self.kills = self.kills + 1
+  self.meta.total = self.meta.total + 1
+  self:addMoney(KILL_REWARD)
+  self:addFloater(L.plus(KILL_REWARD), z.x, z.y - 10, C.gold)
+  self:blood(z.x, z.y, 14, 90, z.y + 6)
+  self:addDecal(z.x, z.y + 3)
+  if owner then owner.kills = owner.kills + 1 end
+end
+
+function Game:hitZombie(z, b)
+  z.hp = z.hp - b.damage
+  z.flash = 0.08
+  self:blood(b.x, b.y, 3, 50, z.y + z.type.h * 0.5)
+  if z.hp <= 0 then self:killZombie(z, b.owner) end
 end
 
 function Game:stepBullet(b, dt)
-  local step = b.speed * dt
-  local n = max(1, ceil(step / 3))
-  local sub = step / n
-  local zs = self.zombies
+  local travel = b.speed * dt
+  local n = max(1, ceil(travel / 4))
+  local sub = travel / n
+  local buckets = self.buckets
   for _ = 1, n do
-    b.x = b.x + b.dx * sub
-    b.y = b.y + b.dy * sub
+    b.x, b.y = b.x + b.dx * sub, b.y + b.dy * sub
     b.dist = b.dist + sub
-    for j = 1, #zs do
-      local z = zs[j]
-      if abs(b.x - z.x) <= 5 and abs(b.y - z.y) <= 7 then
-        self:hitZombie(z, b.damage, b.x, b.y)
-        return true
+    local bi = self:bucketIndex(b.y)
+    for k = max(1, bi - 1), min(self.bucketCount, bi + 1) do
+      local bucket = buckets[k]
+      for j = 1, bucket.n do
+        local z = bucket[j]
+        if z.alive and z.id ~= b.lastHit and abs(b.x - z.x) <= z.type.hitW and abs(b.y - z.y) <= z.type.hitH then
+          self:hitZombie(z, b)
+          b.pierce = b.pierce - 1
+          b.lastHit = z.id
+          if b.pierce <= 0 then return true end
+        end
       end
     end
   end
-  return b.dist > b.maxDist or b.x < -8 or b.x > VW + 8 or b.y < -16 or b.y > VH + 8
+  return b.dist >= b.maxDist or b.x < -10 or b.x > WORLD_W + 10 or b.y < -40 or b.y > WORLD_H + 10
 end
 
 function Game:updateBullets(dt)
@@ -1079,8 +1902,9 @@ function Game:updateBullets(dt)
   for i = #list, 1, -1 do
     local b = list[i]
     if self:stepBullet(b, dt) then
-      removeAt(list, i)
-      bulletPool.release(b)
+      swapRemove(list, i)
+      b.owner = nil
+      bulletPool.put(b)
     end
   end
 end
@@ -1091,16 +1915,16 @@ function Game:updateParticles(dt)
     local p = list[i]
     p.life = p.life - dt
     if p.life <= 0 then
-      removeAt(list, i)
-      particlePool.release(p)
+      swapRemove(list, i)
+      p.color = nil
+      particlePool.put(p)
     else
       p.vy = p.vy + p.grav * dt
-      p.x = p.x + p.vx * dt
-      p.y = p.y + p.vy * dt
+      p.x, p.y = p.x + p.vx * dt, p.y + p.vy * dt
       if p.floorY and p.y > p.floorY then
         p.y = p.floorY
-        p.vy = -p.vy * 0.3
-        p.vx = p.vx * 0.5
+        p.vy = -p.vy * 0.25
+        p.vx = p.vx * 0.6
       end
     end
   end
@@ -1112,300 +1936,813 @@ function Game:updateFloaters(dt)
     local f = list[i]
     f.life = f.life - dt
     f.y = f.y - 14 * dt
-    if f.life <= 0 then removeAt(list, i) end
+    if f.life <= 0 then
+      swapRemove(list, i)
+      f.text, f.color = nil, nil
+      floaterPool.put(f)
+    end
   end
 end
 
-function Game:update(dt)
+function Game:updateDecals(dt)
+  local decals = self.decals
+  for i = 1, MAX_DECALS do
+    local d = decals[i]
+    if d.life > 0 then
+      d.life = d.life - dt
+      if d.life <= 0 then d.sprite = nil end
+    end
+  end
+end
+
+function Game:updateRoll(dt)
+  self.reveal = max(0, self.reveal - dt)
+  if self.rolling <= 0 then return end
+  self.rolling = self.rolling - dt
+  self.rollTick = self.rollTick - dt
+  if self.rollTick <= 0 then
+    self.rollShow = self.rollShow % #WEAPONS + 1
+    self.rollTick = 0.05 + (1 - max(0, self.rolling) / ROLL_TIME) * 0.16
+  end
+  if self.rolling <= 0 then
+    self.rolling = 0
+    self.offer, self.rollResult = self.rollResult, nil
+    if self.offer then self.rollShow = self.offer.index end
+    self.reveal = 0.6
+  end
+end
+
+function Game:step(dt)
   self.clock = self.clock + dt
   self.shake = max(0, self.shake - dt)
   self.moneyFlash = max(0, self.moneyFlash - dt)
-  if self.toast then
-    self.toast.life = self.toast.life - dt
-    if self.toast.life <= 0 then self.toast = nil end
-  end
-  if self.banner then
-    self.banner.life = self.banner.life - dt
-    if self.banner.life <= 0 then self.banner = nil end
-  end
-
+  self.hurtFlash = max(0, self.hurtFlash - dt)
+  self.barricadeHit = max(0, self.barricadeHit - dt)
+  self:updateRoll(dt)
   if self.state == "over" then
     self.overClock = self.overClock + dt
-    self:updateParticles(dt)
-    self:updateFloaters(dt)
-    return
-  end
-
-  if self.rolling > 0 then
-    self.rolling = self.rolling - dt
-    if self.rolling <= 0 then
-      self.rolling = 0
-      self.offer = self.rollResult
-      self.rollResult = nil
-    end
-  end
-
-  if self.state == "wave" then
+  elseif self.state == "wave" then
     self:updateSpawning(dt)
     self:updateZombies(dt)
   end
-  for i = 1, #self.turrets do self.turrets[i]:update(dt, self) end
+  self:rebuildBuckets()
+  if self.state ~= "over" then
+    for i = 1, #self.turrets do self.turrets[i]:update(dt, self) end
+  end
   self:updateBullets(dt)
+  self:sweepZombies()
   self:updateParticles(dt)
   self:updateFloaters(dt)
+  self:updateDecals(dt)
+  if self.state == "wave" and self.spawnQueue <= 0 and #self.zombies == 0 then self:finishWave() end
+end
 
-  if self.state == "wave" and self.spawnQueue == 0 and #self.zombies == 0 then
-    self:finishWave()
+function Game:layoutTurretPanel()
+  local u = self.ui
+  local t = self.selected
+  local show = t ~= nil and self.state ~= "over" and not self.paused
+  u.upgrade.visible, u.sell.visible, u.move.visible = show, show, show
+  self.panelVisible = show
+  if not show then return end
+  local pw, ph = 76, 52
+  local sx = t.slot.side == 1 and (t.slot.cx + 17) or (t.slot.cx - 17 - pw)
+  local sy = floor(t.slot.cy - self.camY - ph / 2)
+  sy = max(TOP_H + 3, min(sy, self:viewH() - ph - 3))
+  self.panelX, self.panelY, self.panelW, self.panelH = sx, sy, pw, ph
+  u.upgrade:place(sx + 5, sy + 14, pw - 10, 11)
+  u.sell:place(sx + 5, sy + 27, pw - 10, 11)
+  u.move:place(sx + 5, sy + 40, pw - 10, 9)
+  local cost = t:upgradeCost()
+  if cost then
+    u.upgrade.label = L.upgrade(cost)
+    u.upgrade.enabled = self.money >= cost
+  else
+    u.upgrade.label = "MAX LEVEL"
+    u.upgrade.enabled = false
   end
+  u.sell.label = L.sell(t:sellValue())
+  u.move.enabled = self.hand == nil
+end
+
+function Game:syncUi()
+  local u = self.ui
+  local active = self.state ~= "over" and not self.paused
+  u.roll.enabled = active and self.rolling <= 0 and self.hand == nil
+  u.buy.enabled = active and self.offer ~= nil and self.hand == nil and self.money >= self.offer.cost
+  u.start.visible = self.state == "build"
+  u.start.enabled = active and #self.turrets > 0 and self.hand == nil
+  u.speed.label = self.speed == 2 and "2X" or "1X"
+  u.speed.enabled = self.state ~= "over"
+  u.pause.enabled = active
+  u.resume.visible, u.newRun.visible, u.quit.visible = self.paused, self.paused, self.paused
+  u.newRun.label = self.confirmNew > 0 and "SURE?" or "NEW RUN"
+  self:layoutTurretPanel()
+end
+
+function Game:frame(dt)
+  self.realClock = self.realClock + dt
+  if self.toastText then
+    self.toastLife = self.toastLife - dt
+    if self.toastLife <= 0 then self.toastText = nil end
+  end
+  if self.bannerText then
+    self.bannerLife = self.bannerLife - dt
+    if self.bannerLife <= 0 then self.bannerText = nil end
+  end
+  self.savedFlash = max(0, self.savedFlash - dt)
+  self.confirmNew = max(0, self.confirmNew - dt)
+  if not self.paused then
+    local dir = 0
+    if love.keyboard.isDown("w", "up") then dir = dir - 1 end
+    if love.keyboard.isDown("s", "down") then dir = dir + 1 end
+    if dir ~= 0 then self:setCamera(self.camTarget + dir * SCROLL_SPEED * dt) end
+    self.acc = self.acc + dt * self.speed
+    local steps, cap = 0, MAX_STEPS * self.speed
+    while self.acc >= FIXED_DT and steps < cap do
+      self:step(FIXED_DT)
+      self.acc = self.acc - FIXED_DT
+      steps = steps + 1
+    end
+    if steps >= cap then self.acc = 0 end
+  end
+  self.camY = self.camY + (self.camTarget - self.camY) * min(1, dt * 14)
+  if abs(self.camTarget - self.camY) < 0.1 then self.camY = self.camTarget end
   self:syncUi()
+  self:autosave(dt)
 end
 
-function Game:drawSlots(mx, my)
-  local build = self.state == "build"
-  local holding = build and self.hand ~= nil
-  local half = SLOT_SIZE / 2
-  for i = 1, #self.slots do
-    local s = self.slots[i]
-    local x, y = s.cx - half, s.cy - half
-    local hover = build and slotContains(s, mx, my)
-    setColor(hover and COLOR.slotHover or COLOR.slot)
-    love.graphics.rectangle("fill", x, y, SLOT_SIZE, SLOT_SIZE)
-    frameRect(x, y, SLOT_SIZE, SLOT_SIZE, COLOR.slotEdge)
-    if holding and not s.turret then
-      local pulse = 0.5 + 0.5 * sin(self.clock * 6)
-      frameRect(x - 1, y - 1, SLOT_SIZE + 2, SLOT_SIZE + 2, COLOR.hilite, 0.4 + 0.5 * pulse)
-      if hover then
-        local angle = s.side == "left" and 0 or pi
-        drawWeapon(self.hand, s.cx, s.cy - 2, angle, 0, 0.55)
-      end
+function Game:click(x, y)
+  local u = self.ui
+  if self.paused then
+    if u.resume:contains(x, y) then
+      self:setPaused(false)
+    elseif u.newRun:contains(x, y) then
+      if self.confirmNew > 0 then self:newRun() else self.confirmNew = 2.5 end
+    elseif u.quit:contains(x, y) then
+      love.event.quit()
     end
-    if s.turret then
-      love.graphics.setColor(1, 1, 1, 1)
-      drawSprite(Assets.sprites.sandbag, s.cx - 9, s.cy + 4)
-    end
-  end
-  love.graphics.setColor(1, 1, 1, 1)
-end
-
-function Game:drawZombies()
-  local zs = self.zombies
-  sort(zs, byDepth)
-  for i = 1, #zs do
-    local z = zs[i]
-    setColor(COLOR.black, 0.25)
-    love.graphics.rectangle("fill", snap(z.x) - 4, snap(z.y) + 6, 8, 2)
-    if z.flash > 0 then
-      love.graphics.setColor(1, 0.55, 0.55, 1)
-    else
-      love.graphics.setColor(1, 1, 1, 1)
-    end
-    local sprite = z.frame == 1 and Assets.sprites.zombieA or Assets.sprites.zombieB
-    drawSprite(sprite, z.x, z.y, 0, 1, 1, 5, 7)
-    if z.hp < z.maxHp then
-      local bx, by = snap(z.x) - 5, snap(z.y) - 10
-      setColor(COLOR.black, 0.8)
-      love.graphics.rectangle("fill", bx - 1, by - 1, 12, 3)
-      setColor(COLOR.hpBad)
-      love.graphics.rectangle("fill", bx, by, 10, 1)
-      setColor(COLOR.hpGood)
-      love.graphics.rectangle("fill", bx, by, max(1, floor(10 * z.hp / z.maxHp)), 1)
-    end
-  end
-  love.graphics.setColor(1, 1, 1, 1)
-end
-
-function Game:drawBullets()
-  local flare = Assets.sprites.flare
-  for i = 1, #self.bullets do
-    local b = self.bullets[i]
-    love.graphics.setColor(1, 0.8, 0.3, 0.4)
-    love.graphics.draw(flare.image, snap(b.x - b.dx * 4), snap(b.y - b.dy * 4), b.angle, 1, 1, 3, 1.5)
-    love.graphics.setColor(1, 1, 1, 1)
-    love.graphics.draw(flare.image, snap(b.x), snap(b.y), b.angle, 1, 1, 3, 1.5)
-  end
-end
-
-function Game:drawParticles()
-  for i = 1, #self.particles do
-    local p = self.particles[i]
-    setColor(p.color, clamp(p.life / p.max * 1.6, 0, 1))
-    love.graphics.rectangle("fill", snap(p.x), snap(p.y), p.size, p.size)
-  end
-  love.graphics.setColor(1, 1, 1, 1)
-end
-
-function Game:drawFloaters()
-  for i = 1, #self.floaters do
-    local f = self.floaters[i]
-    drawTextCentered(f.text, f.x, snap(f.y), 1, f.color, min(1, f.life * 2.5), true)
-  end
-  love.graphics.setColor(1, 1, 1, 1)
-end
-
-function Game:drawBox(mx, my, down)
-  setColor(COLOR.black, 0.25)
-  love.graphics.rectangle("fill", BOX.x + 1, BOX.y - 3, BOX.w, 3)
-  love.graphics.setColor(1, 1, 1, 1)
-  love.graphics.draw(Assets.box, BOX.x, BOX.y)
-  drawTextCentered("LUCKY BOX", 64, 196, 1, COLOR.burn)
-
-  self.ui.roll:draw(mx, my, down)
-  self.ui.buy:draw(mx, my, down)
-
-  local px, py, pw, ph = 106, 201, 76, 32
-  local cx = px + pw / 2
-  setColor(COLOR.panelEdge)
-  love.graphics.rectangle("fill", px - 1, py - 1, pw + 2, ph + 2)
-  setColor(COLOR.panel)
-  love.graphics.rectangle("fill", px, py, pw, ph)
-
-  if self.state == "wave" then
-    drawTextCentered("DEFEND", cx, py + 8, 1, COLOR.red)
-    drawTextCentered("THE BOX!", cx, py + 17, 1, COLOR.gray)
-  elseif self.rolling > 0 then
-    local weapon = WEAPON_LIST[floor(self.clock * 10) % #WEAPON_LIST + 1]
-    if floor(self.clock * 12) % 2 == 0 then
-      love.graphics.setColor(1, 1, 1, 1)
-      drawSprite(Assets.sprites[weapon.sprite], cx - 12, py + 6, 0, 2, 2)
-    else
-      drawTextCentered("?", cx, py + 6, 3, COLOR.gold)
-    end
-    drawTextCentered("ROLLING", cx, py + ph - 8, 1, COLOR.gray)
-  elseif self.offer then
-    love.graphics.setColor(1, 1, 1, 1)
-    drawSprite(Assets.sprites[self.offer.sprite], px + 6, py + 9, 0, 2, 2)
-    drawText(self.offer.name, px + 36, py + 9, 1, COLOR.white)
-    drawText(moneyLabel(self.offer.cost), px + 36, py + 18, 1, self.money >= self.offer.cost and COLOR.gold or COLOR.red)
-  elseif self.hand then
-    drawTextCentered("PLACE IT", cx, py + 8, 1, COLOR.gold)
-    drawTextCentered("ON SAND", cx, py + 17, 1, COLOR.gold)
-  else
-    drawTextCentered("ROLL IS", cx, py + 8, 1, COLOR.gray)
-    drawTextCentered("FREE!", cx, py + 17, 1, COLOR.green)
-  end
-end
-
-function Game:drawMoney()
-  local x, y, w, h = 244, 205, 72, 30
-  setColor(COLOR.black, 0.9)
-  love.graphics.rectangle("fill", x - 1, y - 1, w + 2, h + 2)
-  setColor(COLOR.plate)
-  love.graphics.rectangle("fill", x, y, w, h)
-  setColor(COLOR.plateLight)
-  love.graphics.rectangle("fill", x, y, w, 1)
-  love.graphics.rectangle("fill", x, y, 1, h)
-  drawText("CASH", x + 5, y + 4, 1, COLOR.gray)
-  local text = moneyLabel(self.money)
-  local scale = textWidth(text, 3) <= w - 10 and 3 or 2
-  local color = self.moneyFlash > 0 and self.moneyFlashColor or COLOR.gold
-  drawText(text, x + 5, y + 12 + (3 - scale) * 2, scale, color, 1, true)
-end
-
-function Game:drawHud()
-  drawText(waveLabel(self.wave), 6, 6, 2, COLOR.white, 1, true)
-  local hpColor = self.life <= 3 and COLOR.red or COLOR.white
-  drawTextRight(lifeLabel(self.life), VW - 6, 6, 2, hpColor, 1, true)
-  if self.state == "wave" then
-    drawTextCentered(zombieLabel(self.spawnQueue + #self.zombies), 160, 8, 1, COLOR.white, 1, true)
-  else
-    local hint = self:hint()
-    if hint then drawTextCentered(hint, 160, 8, 1, COLOR.white, 1, true) end
-  end
-end
-
-function Game:drawOverlays(mx, my)
-  if self.banner then
-    local b = self.banner
-    drawTextCentered(b.text, 160, 66, b.scale, b.color, clamp(b.life / 0.5, 0, 1), true)
-  end
-  if self.toast then
-    local t = self.toast
-    local tw = textWidth(t.text, 1)
-    local a = clamp(t.life / 0.4, 0, 1)
-    setColor(COLOR.black, 0.65 * a)
-    love.graphics.rectangle("fill", floor(160 - tw / 2) - 4, 22, tw + 8, 11)
-    drawTextCentered(t.text, 160, 25, 1, COLOR.white, a)
-  end
-  if self.hand and self.state == "build" then
-    love.graphics.setColor(1, 1, 1, 0.9)
-    drawSprite(Assets.sprites[self.hand.sprite], mx, my, 0, 2, 2, 6, 3)
+    return
   end
   if self.state == "over" then
-    setColor(COLOR.black, 0.6)
-    love.graphics.rectangle("fill", 0, 0, VW, VH)
-    drawTextCentered("GAME OVER", 160, 78, 5, COLOR.red, 1, true)
-    drawTextCentered(clearedLabel(self.wave - 1), 160, 124, 2, COLOR.white, 1, true)
-    if self.overClock > 0.7 and floor(self.clock * 2) % 2 == 0 then
-      drawTextCentered("CLICK TO RESTART", 160, 150, 2, COLOR.gold, 1, true)
+    if self.overClock > 0.8 then self:newRun() end
+    return
+  end
+  if self:overPanel(x, y) then
+    if u.upgrade:contains(x, y) then
+      self:upgradeSelected()
+    elseif u.sell:contains(x, y) then
+      self:sellSelected()
+    elseif u.move:hit(x, y) then
+      self:moveSelected()
+    end
+    return
+  end
+  if y >= self:viewH() then
+    if u.roll:contains(x, y) then
+      self:roll()
+    elseif u.buy:contains(x, y) then
+      self:buy()
+    elseif u.start:contains(x, y) then
+      self:startWave()
+    elseif u.speed:contains(x, y) then
+      self:toggleSpeed()
+    elseif u.pause:contains(x, y) then
+      self:setPaused(true)
+    end
+    return
+  end
+  if y < TOP_H or self:onMinimap(x, y) then return end
+  local slot = self:slotAt(x, y + self.camY)
+  if slot then
+    self:clickSlot(slot)
+    return
+  end
+  self.selected = nil
+end
+
+function Game:cancelAction()
+  if self.paused or self.state == "over" then return end
+  if not self:cancelHand() then self.selected = nil end
+end
+
+function Game:key(k)
+  if k == "escape" then
+    if self.paused then
+      self:setPaused(false)
+    elseif self.hand then
+      self:cancelHand()
+    elseif self.selected then
+      self.selected = nil
+    elseif self.state ~= "over" then
+      self:setPaused(true)
+    end
+    return
+  end
+  if k == "p" then
+    self:setPaused(not self.paused)
+    return
+  end
+  if k == "-" or k == "kp-" then
+    changeZoom(-1)
+    return
+  end
+  if k == "=" or k == "+" or k == "kp+" then
+    changeZoom(1)
+    return
+  end
+  if self.paused then
+    if k == "n" then
+      if self.confirmNew > 0 then self:newRun() else self.confirmNew = 2.5 end
+    elseif k == "q" then
+      love.event.quit()
+    end
+    return
+  end
+  if self.state == "over" then
+    if (k == "return" or k == "space" or k == "r") and self.overClock > 0.8 then self:newRun() end
+    return
+  end
+  if k == "space" or k == "return" then
+    self:startWave()
+  elseif k == "r" then
+    self:roll()
+  elseif k == "b" then
+    self:buy()
+  elseif k == "f" or k == "tab" then
+    self:toggleSpeed()
+  elseif k == "u" then
+    self:upgradeSelected()
+  elseif k == "x" or k == "delete" then
+    self:sellSelected()
+  elseif k == "m" then
+    self:moveSelected()
+  elseif k == "home" then
+    self:setCamera(0)
+  elseif k == "end" then
+    self:setCamera(self:maxCam())
+  elseif k == "pageup" then
+    self:setCamera(self.camTarget - self:viewH() * 0.8)
+  elseif k == "pagedown" then
+    self:setCamera(self.camTarget + self:viewH() * 0.8)
+  end
+end
+
+function Game:drawDecals(top, bottom)
+  local decals = self.decals
+  for i = 1, MAX_DECALS do
+    local d = decals[i]
+    if d.life > 0 and d.sprite and d.y > top and d.y < bottom then
+      lg.setColor(1, 1, 1, min(1, d.life / 8) * 0.85)
+      spr(d.sprite, d.x, d.y, 0, d.flip, 1, floor(d.sprite.w / 2), floor(d.sprite.h / 2))
+    end
+  end
+end
+
+function Game:drawSlots(top, bottom, hover)
+  local pulse = 0.55 + 0.45 * sin(self.realClock * 6)
+  for i = 1, #self.slots do
+    local s = self.slots[i]
+    if s.cy > top and s.cy < bottom then
+      if s.turret then
+        lg.setColor(1, 1, 1, 1)
+        spr(SP.padFull, s.cx - 13, s.cy - 13)
+      else
+        if self.hand then
+          lg.setColor(1, 0.92, 0.55, 0.6 + 0.4 * pulse)
+        elseif hover == s then
+          lg.setColor(1, 1, 1, 1)
+        else
+          lg.setColor(1, 1, 1, 0.75)
+        end
+        spr(SP.padEmpty, s.cx - 13, s.cy - 13)
+      end
+    end
+  end
+end
+
+function Game:drawBarricade()
+  local idx = 3
+  if self.life > MAX_LIFE * 0.66 then
+    idx = 1
+  elseif self.life > MAX_LIFE * 0.33 then
+    idx = 2
+  end
+  local ox = self.barricadeHit > 0 and rndInt(-1, 1) or 0
+  lg.setColor(1, 1, 1, 1)
+  spr(BARRICADE[idx], floor(ROAD_C - 76) + ox, BARRICADE_Y)
+end
+
+function Game:drawZombies(top, bottom)
+  local zs = self.zombies
+  sortByY(zs)
+  for i = 1, #zs do
+    local z = zs[i]
+    if z.alive and z.y > top and z.y < bottom then
+      local zt = z.type
+      local x, y = snap(z.x), snap(z.y)
+      local sh = zt.shadowSpr
+      lg.setColor(1, 1, 1, 1)
+      spr(sh, x - floor(sh.w / 2), y + floor(zt.h / 2) - 2)
+      if z.flash > 0 then lg.setColor(1, 0.4, 0.4, 1) end
+      spr((floor(z.step / 7) % 2 == 0) and zt.sprA or zt.sprB, x, y, 0, 1, 1, zt.w / 2, zt.h / 2)
+      if z.hp < z.maxHp then
+        local bw = zt.w - 2
+        local bx, by = x - floor(bw / 2), y - floor(zt.h / 2) - 4
+        setColor(C.black, 0.8)
+        lg.rectangle("fill", bx - 1, by - 1, bw + 2, 3)
+        setColor(C.barBack)
+        lg.rectangle("fill", bx, by, bw, 1)
+        setColor(C.barHp)
+        lg.rectangle("fill", bx, by, max(1, floor(bw * z.hp / z.maxHp + 0.5)), 1)
+      end
+    end
+  end
+end
+
+function Game:drawBullets(top, bottom)
+  local bs = self.bullets
+  if #bs == 0 then return end
+  local px, glow, flare = SP.pixel, SP.glow, SP.flare
+  lg.setBlendMode("add")
+  for i = 1, #bs do
+    local b = bs[i]
+    if b.y > top and b.y < bottom then
+      setColor(GLOW, 0.45)
+      lg.draw(atlas, px.quad, b.x, b.y, b.angle, -min(b.dist, b.small and 4 or 9), 1, 0, 0.5)
+      lg.setColor(1, 1, 1, 0.7)
+      spr(glow, snap(b.x), snap(b.y), 0, 1, 1, 2, 2)
+    end
+  end
+  lg.setBlendMode("alpha")
+  lg.setColor(1, 1, 1, 1)
+  for i = 1, #bs do
+    local b = bs[i]
+    if b.y > top and b.y < bottom then spr(flare, snap(b.x), snap(b.y), b.angle, 1, 1, 5, 1) end
+  end
+end
+
+function Game:drawParticles(top, bottom)
+  local list = self.particles
+  local q = SP.pixel.quad
+  for i = 1, #list do
+    local p = list[i]
+    if p.y > top and p.y < bottom then
+      setColor(p.color, min(1, p.life / p.max * 1.5))
+      lg.draw(atlas, q, snap(p.x), snap(p.y), 0, p.size, p.size)
+    end
+  end
+end
+
+function Game:drawFloaters(top, bottom)
+  local list = self.floaters
+  for i = 1, #list do
+    local f = list[i]
+    if f.y > top and f.y < bottom then
+      textCenter(f.text, f.x, f.y, 1, f.color, min(1, f.life * 2.5), true)
+    end
+  end
+end
+
+function Game:drawPreview(hover)
+  local hand = self.hand
+  if not (hand and hover and not hover.turret) then return end
+  local def = hand.def
+  lg.setColor(1, 1, 1, 0.6)
+  local right = hover.side == 1
+  spr(SP[def.sprite], hover.cx, hover.cy - 1, right and 0 or pi, 1, right and 1 or -1, def.pivotX, def.pivotY)
+end
+
+function Game:drawRings(hover)
+  local phase = self.realClock * 0.4
+  local t = self.selected
+  if t then
+    dottedRing(t.x, t.y, t.range, phase, C.ring, 0.75)
+    dottedRing(t.slot.cx, t.slot.cy, 14, -phase * 3, C.gold, 1)
+  elseif hover and hover.turret and not self.hand then
+    dottedRing(hover.turret.x, hover.turret.y, hover.turret.range, phase, C.ring, 0.35)
+  end
+  if self.hand and hover and not hover.turret then
+    dottedRing(hover.cx, hover.cy, self.hand.def.range * (1 + 0.1 * (self.hand.level - 1)), phase, C.ring, 0.6)
+  end
+end
+
+function Game:drawWorld(mx, my)
+  local viewH = self:viewH()
+  local camY = floor(self.camY + 0.5)
+  local ox, oy = 0, 0
+  if self.shake > 0 then ox, oy = rndInt(-1, 1), rndInt(-1, 1) end
+  local hover = nil
+  if not self.paused and self.state ~= "over" and self:isWorldPoint(mx, my) then
+    hover = self:slotAt(mx, my + camY)
+  end
+  lg.push()
+  lg.translate(ox, oy - camY)
+  lg.setColor(1, 1, 1, 1)
+  lg.draw(Assets.background, 0, 0)
+  local top, bottom = camY - 30, camY + viewH + 30
+  self:drawDecals(top, bottom)
+  self:drawSlots(top, bottom, hover)
+  self:drawBarricade()
+  self:drawZombies(top, bottom)
+  for i = 1, #self.turrets do
+    local t = self.turrets[i]
+    if t.y > top and t.y < bottom then t:draw() end
+  end
+  self:drawPreview(hover)
+  self:drawBullets(top, bottom)
+  self:drawParticles(top, bottom)
+  self:drawFloaters(top, bottom)
+  self:drawRings(hover)
+  lg.pop()
+end
+
+function Game:drawTopBar()
+  setColor(C.hudBg, 0.86)
+  lg.rectangle("fill", 0, 0, VW, TOP_H)
+  setColor(C.hudEdge)
+  lg.rectangle("fill", 0, TOP_H, VW, 1)
+  text(L.wave(self.wave), 5, 5, 1, C.cream, 1, true)
+  local hx = 46
+  lg.setColor(1, 1, 1, 1)
+  spr(SP.heart, hx, 4)
+  local bx = hx + 10
+  local bw = MAX_LIFE * 3
+  setColor(C.black, 0.8)
+  lg.rectangle("fill", bx - 1, 4, bw + 1, 7)
+  local filled = self.life * 3
+  setColor(C.hpBack)
+  lg.rectangle("fill", bx, 5, bw - 1, 5)
+  if filled > 0 then
+    setColor(self.hurtFlash > 0 and C.white or C.hp)
+    lg.rectangle("fill", bx, 5, filled - 1, 5)
+    setColor(C.hpHi)
+    lg.rectangle("fill", bx, 5, filled - 1, 1)
+  end
+  setColor(C.black, 0.8)
+  for i = 1, MAX_LIFE - 1 do lg.rectangle("fill", bx + i * 3 - 1, 5, 1, 5) end
+  text(L.num(self.life), bx + bw + 4, 5, 1, self.life <= 5 and C.red or C.cream, 1, true)
+  local cx = 198
+  if self.state == "wave" then
+    local total = max(1, self.waveTotal)
+    local remaining = self.spawnQueue + #self.zombies
+    local ratio = clamp(1 - remaining / total, 0, 1)
+    local pw = 90
+    local px = floor(cx - pw / 2)
+    setColor(C.black, 0.8)
+    lg.rectangle("fill", px - 1, 3, pw + 2, 9)
+    setColor(C.progBack)
+    lg.rectangle("fill", px, 4, pw, 7)
+    setColor(C.prog)
+    lg.rectangle("fill", px, 4, floor(pw * ratio), 7)
+    textCenter(L.left(remaining), cx, 5, 1, C.cream, 1, true)
+  elseif self.state == "build" then
+    textCenter(self:hint(), cx, 5, 1, C.cream, 0.75 + 0.25 * sin(self.realClock * 3), true)
+  end
+  if self.speed == 2 then text(">>", VW - 84, 5, 1, C.gold, 1, true) end
+  lg.setColor(1, 1, 1, 1)
+  spr(SP.skull, VW - 62, 4)
+  text(L.num(self.kills), VW - 52, 5, 1, C.cream, 1, true)
+end
+
+function Game:drawMinimap()
+  local x, y, w, h = self:minimapRect()
+  if h < 24 then return end
+  local s = h / WORLD_H
+  setColor(C.black, 0.85)
+  lg.rectangle("fill", x - 1, y - 1, w + 2, h + 2)
+  setColor(C.mapSand)
+  lg.rectangle("fill", x, y, w, h)
+  local rl = x + floor(ROAD_L / WORLD_W * w + 0.5)
+  local rr = x + floor(ROAD_R / WORLD_W * w + 0.5)
+  setColor(C.mapRoad)
+  lg.rectangle("fill", rl, y, rr - rl, h)
+  setColor(WOOD[1])
+  lg.rectangle("fill", rl, y + floor(BARRICADE_Y * s), rr - rl, 1)
+  local q = SP.pixel.quad
+  setColor(C.gold)
+  for i = 1, #self.turrets do
+    local t = self.turrets[i]
+    lg.draw(atlas, q, x + floor(t.x / WORLD_W * w), y + floor(t.y * s))
+  end
+  setColor(C.red)
+  for i = 1, #self.zombies do
+    local z = self.zombies[i]
+    if z.y >= 0 then lg.draw(atlas, q, x + floor(z.x / WORLD_W * w), y + floor(z.y * s)) end
+  end
+  setColor(C.white, 0.85)
+  frameRect(x - 1, y + floor(self.camY * s), w + 2, max(3, floor(self:viewH() * s)))
+end
+
+function Game:drawIndicators()
+  if self.state ~= "wave" then return end
+  local above = 0
+  local limit = self.camY - 4
+  local zs = self.zombies
+  for i = 1, #zs do
+    if zs[i].y < limit and zs[i].y > -10 then above = above + 1 end
+  end
+  if above > 0 then
+    local x = floor(ROAD_C)
+    local blink = floor(self.realClock * 4) % 2 == 0
+    lg.setColor(1, 1, 1, blink and 1 or 0.55)
+    spr(SP.arrow, x - 9, TOP_H + 4)
+    text(L.num(above), x - 2, TOP_H + 3, 1, C.red, 1, true)
+  end
+end
+
+function Game:drawTurretPanel(mx, my, down)
+  if not self.panelVisible then return end
+  local t = self.selected
+  local x, y, w, h = self.panelX, self.panelY, self.panelW, self.panelH
+  setColor(C.black, 0.9)
+  lg.rectangle("fill", x - 1, y - 1, w + 2, h + 2)
+  setColor(C.panel, 0.95)
+  lg.rectangle("fill", x, y, w, h)
+  setColor(RARITY[t.def.rarity].color)
+  lg.rectangle("fill", x, y, w, 1)
+  text(t.def.name, x + 5, y + 4, 1, C.white)
+  textRight(L.level(t.level), x + w - 4, y + 4, 1, C.gold)
+  local u = self.ui
+  u.upgrade:draw(mx, my, down)
+  u.sell:draw(mx, my, down)
+  u.move:draw(mx, my, down)
+end
+
+function Game:drawDisplay(x, y, w, h)
+  local cx = x + w / 2
+  setColor(C.black)
+  lg.rectangle("fill", x - 1, y - 1, w + 2, h + 2)
+  setColor(C.panel)
+  lg.rectangle("fill", x, y, w, h)
+  setColor(C.white, 0.03)
+  for ry = y + 1, y + h - 1, 2 do lg.rectangle("fill", x, ry, w, 1) end
+  if self.rolling > 0 then
+    local def = WEAPONS[self.rollShow] or WEAPONS[1]
+    local s = SP[def.sprite]
+    lg.setColor(1, 1, 1, 0.85)
+    spr(s, floor(cx - s.w), y + 4, 0, 2, 2)
+    textCenter(def.name, cx, y + 22, 1, C.dim)
+    if floor(self.realClock * 6) % 2 == 0 then textCenter("? ? ?", cx, y + 30, 1, C.gold) end
+  elseif self.offer then
+    local def = self.offer
+    local rar = RARITY[def.rarity]
+    setColor(rar.color, 0.55 + 0.45 * sin(self.realClock * 5) + self.reveal)
+    frameRect(x, y, w, h)
+    if self.reveal > 0 then
+      setColor(rar.color, self.reveal * 0.5)
+      lg.rectangle("fill", x + 1, y + 1, w - 2, h - 2)
+    end
+    local s = SP[def.sprite]
+    lg.setColor(1, 1, 1, 1)
+    spr(s, floor(cx - s.w), y + 4, 0, 2, 2)
+    textCenter(def.name, cx, y + 22, 1, C.white)
+    text(L.money(def.cost), x + 5, y + 30, 1, self.money >= def.cost and C.gold or C.red)
+    textRight(rar.name, x + w - 4, y + 30, 1, rar.color)
+  elseif self.hand then
+    textCenter("PLACE IT", cx, y + 12, 1, C.gold)
+    textCenter("ON THE SAND", cx, y + 21, 1, C.gold)
+  else
+    textCenter("ROLL IS", cx, y + 12, 1, C.gray)
+    textCenter("FREE!", cx, y + 21, 1, C.green)
+  end
+end
+
+function Game:drawPanel(mx, my, down)
+  local u = self.ui
+  local py = self.view.vh - PANEL_H
+  setColor(C.ground)
+  lg.rectangle("fill", 0, py, VW, PANEL_H)
+  setColor(C.groundHi)
+  lg.rectangle("fill", 0, py, VW, 1)
+  setColor(C.groundLo)
+  lg.rectangle("fill", 0, py + 1, VW, 1)
+  local bx = 4
+  if self.rolling > 0 then bx = bx + ((floor(self.realClock * 30) % 2 == 0) and 1 or -1) end
+  lg.setColor(1, 1, 1, 1)
+  spr(SP.box, bx, py + 4)
+  text("LUCKY BOX", bx + 10, py + 8, 1, C.burn)
+  u.roll:draw(mx, my, down)
+  u.buy:draw(mx, my, down)
+  self:drawDisplay(74, py + 12, 96, 38)
+
+  local rx, ry, rw, rh = 248, py + 4, 132, 22
+  setColor(C.black, 0.9)
+  lg.rectangle("fill", rx - 1, ry - 1, rw + 2, rh + 2)
+  setColor(C.plate)
+  lg.rectangle("fill", rx, ry, rw, rh)
+  setColor(C.plateHi)
+  lg.rectangle("fill", rx, ry, rw, 1)
+  lg.rectangle("fill", rx, ry, 1, rh)
+  setColor(C.plateLo)
+  lg.rectangle("fill", rx, ry + rh - 1, rw, 1)
+  lg.setColor(1, 1, 1, 1)
+  spr(SP.coin, rx + 6, ry + 8)
+  text(L.money(floor(self.money)), rx + 17, ry + 6, 2, self.moneyFlash > 0 and self.moneyFlashColor or C.gold, 1, true)
+  textRight("CASH", rx + rw - 5, ry + 4, 1, C.gray)
+
+  if self.state == "build" then
+    u.start:draw(mx, my, down)
+  else
+    local px, ppy, pw, ph = 248, py + 30, 88, 24
+    setColor(C.black, 0.9)
+    lg.rectangle("fill", px - 1, ppy - 1, pw + 2, ph + 2)
+    setColor(C.progBack)
+    lg.rectangle("fill", px, ppy, pw, ph)
+    if self.state == "wave" then
+      local total = max(1, self.waveTotal)
+      local remaining = self.spawnQueue + #self.zombies
+      setColor(C.prog)
+      lg.rectangle("fill", px, ppy, floor(pw * clamp(1 - remaining / total, 0, 1)), ph)
+      textCenter(L.wave(self.wave), px + pw / 2, ppy + 5, 1, C.cream, 1, true)
+      textCenter(L.left(remaining), px + pw / 2, ppy + 14, 1, C.cream, 1, true)
+    else
+      textCenter("GAME OVER", px + pw / 2, ppy + 9, 1, C.red, 1, true)
+    end
+  end
+  u.speed:draw(mx, my, down)
+  u.pause:draw(mx, my, down)
+end
+
+function Game:drawOverlays(mx, my, down)
+  local viewH = self:viewH()
+  local vh = self.view.vh
+  local cx = VW / 2
+  if self.hurtFlash > 0 then
+    lg.setColor(0.85, 0.1, 0.08, min(0.8, self.hurtFlash * 1.5))
+    lg.rectangle("fill", 0, TOP_H + 1, VW, 2)
+    lg.rectangle("fill", 0, viewH - 2, VW, 2)
+    lg.rectangle("fill", 0, TOP_H + 1, 2, viewH - TOP_H - 1)
+    lg.rectangle("fill", VW - 2, TOP_H + 1, 2, viewH - TOP_H - 1)
+  end
+  if self.bannerText then
+    local a = clamp(self.bannerLife / 0.5, 0, 1) * clamp((self.bannerMax - self.bannerLife) / 0.15, 0, 1)
+    local y = floor(viewH * 0.32)
+    textCenter(self.bannerText, cx, y, 3, self.bannerColor, a, true)
+    if self.bannerSub then textCenter(self.bannerSub, cx, y + 20, 2, C.gold, a, true) end
+  end
+  if self.toastText then
+    local a = clamp(self.toastLife / 0.4, 0, 1)
+    local tw = textWidth(self.toastText, 1)
+    setColor(C.black, 0.7 * a)
+    lg.rectangle("fill", floor(cx - tw / 2) - 5, TOP_H + 6, tw + 10, 11)
+    textCenter(self.toastText, cx, TOP_H + 9, 1, C.white, a)
+  end
+  if self.savedFlash > 0 then
+    textRight("SAVED", VW - 26, TOP_H + 5, 1, C.green, min(1, self.savedFlash), true)
+  end
+  if self.hand and not self.paused then
+    lg.setColor(1, 1, 1, 0.9)
+    spr(SP[self.hand.def.sprite], floor(mx) + 5, floor(my) + 5)
+  end
+  if self.state == "over" then
+    setColor(C.black, 0.65)
+    lg.rectangle("fill", 0, 0, VW, vh)
+    local y = floor(vh * 0.26)
+    textCenter("GAME OVER", cx, y, 5, C.red, 1, true)
+    textCenter(L.reached(self.wave), cx, y + 36, 2, C.cream, 1, true)
+    textCenter(L.kills(self.kills), cx, y + 54, 1, C.gray, 1, true)
+    textCenter(L.best(self.meta.best), cx, y + 64, 1, C.gold, 1, true)
+    if self.overClock > 0.8 and floor(self.realClock * 2) % 2 == 0 then
+      textCenter("CLICK TO START A NEW RUN", cx, y + 84, 1, C.white, 1, true)
     end
   end
   if self.paused then
-    setColor(COLOR.black, 0.55)
-    love.graphics.rectangle("fill", 0, 0, VW, VH)
-    drawTextCentered("PAUSED", 160, 108, 4, COLOR.white, 1, true)
+    setColor(C.black, 0.65)
+    lg.rectangle("fill", 0, 0, VW, vh)
+    local cy = floor(vh / 2)
+    textCenter("PAUSED", cx, cy - 64, 3, C.white, 1, true)
+    textCenter(L.best(self.meta.best), cx, cy - 42, 1, C.gold, 1, true)
+    textCenter(L.total(self.meta.total), cx, cy - 34, 1, C.gray, 1, true)
+    local u = self.ui
+    u.resume:draw(mx, my, down)
+    u.newRun:draw(mx, my, down)
+    u.quit:draw(mx, my, down)
+    textCenter("SCROLL: WHEEL, DRAG, W/S, MINIMAP", cx, cy + 54, 1, C.gray)
+    textCenter("R ROLL  B BUY  SPACE START  F SPEED  P PAUSE", cx, cy + 64, 1, C.gray)
+    textCenter("U UPGRADE  X SELL  M MOVE  -/= ZOOM  F11 FULLSCREEN", cx, cy + 74, 1, C.gray)
   end
-  love.graphics.setColor(1, 1, 1, 1)
 end
 
 function Game:draw(mx, my, down)
-  local sx, sy = 0, 0
-  if self.shake > 0 then sx, sy = rndInt(-1, 1), rndInt(-1, 1) end
-  love.graphics.setColor(1, 1, 1, 1)
-  love.graphics.push()
-  love.graphics.translate(sx, sy)
-  love.graphics.draw(Assets.background, 0, 0)
-  self:drawSlots(mx, my)
-  for i = 1, #self.turrets do self.turrets[i]:draw() end
-  self:drawZombies()
-  self:drawBullets()
-  self:drawParticles()
-  self:drawFloaters()
-  love.graphics.pop()
-
-  self:drawBox(mx, my, down)
-  self:drawMoney()
-  self:drawHud()
-  if self.state == "build" then self.ui.start:draw(mx, my, down) end
-  self:drawOverlays(mx, my)
+  lg.setFont(Assets.font)
+  lg.setColor(1, 1, 1, 1)
+  self:drawWorld(mx, my)
+  self:drawTopBar()
+  self:drawMinimap()
+  self:drawIndicators()
+  self:drawTurretPanel(mx, my, down)
+  self:drawPanel(mx, my, down)
+  self:drawOverlays(mx, my, down)
 end
 
-local function computeViewport()
-  local w, h = love.graphics.getDimensions()
-  local s = min(w / VW, h / VH)
-  if s >= 1 then s = floor(s) end
-  view.scale = s
+computeViewport = function()
+  local w, h = lg.getDimensions()
+  if w <= 0 or h <= 0 then return end
+  local fit = min(w / VW, h / MIN_VH)
+  local s
+  if fit < 1 then
+    s = fit
+  else
+    local maxS = floor(fit)
+    local minS = min(maxS, max(1, ceil(h / MAX_VH)))
+    s = clamp(maxS + (meta and meta.zoom or 0), minS, maxS)
+  end
+  local vh = clamp(floor(h / s), 1, MAX_VH)
+  view.scale, view.vh = s, vh
   view.x = floor((w - VW * s) / 2)
-  view.y = floor((h - VH * s) / 2)
+  view.y = floor((h - vh * s) / 2)
+  if not canvas or canvas:getHeight() ~= vh then
+    local old = canvas
+    canvas = lg.newCanvas(VW, vh)
+    canvas:setFilter("nearest", "nearest")
+    if old then old:release() end
+  end
+  if game then game:onResize() end
+end
+
+changeZoom = function(delta)
+  if not meta then return end
+  local w, h = lg.getDimensions()
+  local maxS = max(1, floor(min(w / VW, h / MIN_VH)))
+  local minS = min(maxS, max(1, ceil(h / MAX_VH)))
+  meta.zoom = clamp(meta.zoom + delta, minS - maxS, 0)
+  computeViewport()
+  if game then
+    game.metaDirty = true
+    game:notify(meta.zoom == 0 and "ZOOM: LARGEST" or "ZOOM CHANGED")
+  end
+end
+
+local function toggleFullscreen()
+  local full = not lw.getFullscreen()
+  local ok = pcall(lw.setFullscreen, full, "desktop")
+  if ok and meta then
+    meta.full = full
+    if game then game.metaDirty = true end
+  end
+  computeViewport()
 end
 
 local function toVirtual(x, y)
   return (x - view.x) / view.scale, (y - view.y) / view.scale
 end
 
+local function protect(fn, ...)
+  local ok, err = pcall(fn, ...)
+  if not ok then fatalError = tostring(err) end
+  return ok
+end
+
 local function initialise()
-  local ok = love.window.setMode(960, 720, { resizable = true, minwidth = VW, minheight = VH, vsync = 1 })
+  defaultFont = lg.getFont()
+  lf.setIdentity("zombierush")
+  meta = loadMeta()
+  local dw, dh = lw.getDesktopDimensions()
+  dw, dh = dw or 1280, dh or 800
+  local w = clamp(floor(dw * 0.8), VW * 2, max(VW * 2, dw))
+  local h = clamp(floor(dh * 0.8), MIN_VH * 2, max(MIN_VH * 2, dh))
+  local ok = lw.setMode(w, h, { resizable = true, minwidth = VW, minheight = MIN_VH, vsync = 1, fullscreen = meta.full, fullscreentype = "desktop" })
   if not ok then error("could not create the game window") end
-  love.window.setTitle("Zombie Rush")
-  love.graphics.setDefaultFilter("nearest", "nearest", 1)
-  love.graphics.setLineStyle("rough")
-  love.graphics.setLineWidth(1)
-  loadAssets()
-  canvas = track(love.graphics.newCanvas(VW, VH))
-  canvas:setFilter("nearest", "nearest")
-  ui = {
-    start = Button.new(110, 96, 100, 22, "START WAVE", THEME.red, 2),
-    roll = Button.new(32, 204, 64, 26, "ROLL", THEME.green, 2),
-    buy = Button.new(186, 204, 40, 26, "BUY", THEME.gold, 2),
-  }
-  game = Game.new(ui)
+  lw.setTitle("Zombie Rush Defense")
+  lg.setDefaultFilter("nearest", "nearest", 1)
+  lg.setLineStyle("rough")
+  buildAssets()
+  ui = createUi()
   computeViewport()
+  game = Game.new(ui, view, meta)
+  game:onResize()
+  local fields, list = readSave(SAVE_RUN)
+  if fields and game:applyRun(fields, list) then
+    game:notify("RUN RESTORED - WAVE " .. game.wave)
+  end
+  game:setCamera(game:maxCam(), true)
+  game:syncUi()
 end
 
 local function drawFatal()
-  love.graphics.setCanvas()
-  love.graphics.clear(0.1, 0.02, 0.02, 1)
-  love.graphics.setColor(1, 1, 1, 1)
-  love.graphics.printf("An error occurred:\n\n" .. tostring(fatalError) .. "\n\nPress ESC to quit.", 20, 20, love.graphics.getWidth() - 40)
+  lg.setCanvas()
+  lg.origin()
+  lg.setBlendMode("alpha")
+  lg.clear(0.1, 0.02, 0.02, 1)
+  if defaultFont then lg.setFont(defaultFont) end
+  lg.setColor(1, 1, 1, 1)
+  lg.printf("Something went wrong:\n\n" .. tostring(fatalError) .. "\n\nProgress up to the last autosave is kept.\nPress ESC to quit.", 20, 20, max(100, lg.getWidth() - 40))
+end
+
+local function releaseResources()
+  if canvas then
+    pcall(canvas.release, canvas)
+    canvas = nil
+  end
+  for i = #Assets.owned, 1, -1 do
+    local r = Assets.owned[i]
+    if r and r.release then pcall(r.release, r) end
+    Assets.owned[i] = nil
+  end
+  zombiePool.clear()
+  bulletPool.clear()
+  particlePool.clear()
+  floaterPool.clear()
 end
 
 function love.load()
@@ -1414,78 +2751,113 @@ function love.load()
 end
 
 function love.resize()
-  if not fatalError then computeViewport() end
+  if not fatalError then protect(computeViewport) end
 end
 
 function love.focus(focused)
-  windowFocused = focused
+  if not focused and game and not fatalError and game.state ~= "over" then game:setPaused(true) end
 end
 
 function love.update(dt)
   if fatalError or not game then return end
-  dt = min(dt, 1 / 30)
-  game.paused = not windowFocused
-  if game.paused then return end
-  local ok, err = pcall(game.update, game, dt)
-  if not ok then fatalError = tostring(err) end
+  protect(game.frame, game, min(dt, 0.25))
 end
 
 function love.draw()
-  if fatalError or not game then
-    if fatalError then drawFatal() end
+  if fatalError then
+    drawFatal()
     return
   end
+  if not game or not canvas then return end
   local mx, my = toVirtual(love.mouse.getPosition())
-  love.graphics.setCanvas(canvas)
-  love.graphics.clear(0, 0, 0, 1)
+  lg.setCanvas(canvas)
+  lg.clear(0, 0, 0, 1)
   local ok, err = pcall(game.draw, game, mx, my, love.mouse.isDown(1))
-  love.graphics.setCanvas()
+  lg.setCanvas()
+  lg.setBlendMode("alpha")
   if not ok then
     fatalError = tostring(err)
     drawFatal()
     return
   end
-  love.graphics.clear(0.05, 0.05, 0.06, 1)
-  love.graphics.setColor(1, 1, 1, 1)
-  love.graphics.setBlendMode("alpha", "premultiplied")
-  love.graphics.draw(canvas, view.x, view.y, 0, view.scale, view.scale)
-  love.graphics.setBlendMode("alpha", "alphamultiply")
+  lg.origin()
+  lg.clear(C.letterbox[1], C.letterbox[2], C.letterbox[3], 1)
+  lg.setColor(1, 1, 1, 1)
+  lg.setBlendMode("alpha", "premultiplied")
+  lg.draw(canvas, view.x, view.y, 0, view.scale, view.scale)
+  lg.setBlendMode("alpha", "alphamultiply")
 end
+
+local pointer = { down = false, button = 0, sx = 0, sy = 0, cam = 0, drag = false, mode = nil }
 
 function love.mousepressed(x, y, button)
   if fatalError or not game then return end
   local vx, vy = toVirtual(x, y)
-  local ok, err = pcall(game.click, game, vx, vy, button)
-  if not ok then fatalError = tostring(err) end
+  if button == 2 then
+    protect(game.cancelAction, game)
+    return
+  end
+  if button ~= 1 and button ~= 3 then return end
+  pointer.down, pointer.button, pointer.sx, pointer.sy = true, button, vx, vy
+  pointer.cam, pointer.drag = game.camTarget, false
+  if game.paused or game.state == "over" then
+    pointer.mode = "ui"
+  elseif game:onMinimap(vx, vy) then
+    pointer.mode = "minimap"
+    protect(game.minimapJump, game, vy)
+  elseif button == 3 or game:isWorldPoint(vx, vy) then
+    pointer.mode = "world"
+  else
+    pointer.mode = "ui"
+  end
+end
+
+function love.mousemoved(x, y)
+  if fatalError or not game or not pointer.down then return end
+  local vx, vy = toVirtual(x, y)
+  if pointer.mode == "minimap" then
+    protect(game.minimapJump, game, vy)
+  elseif pointer.mode == "world" then
+    if not pointer.drag and (abs(vy - pointer.sy) > 3 or abs(vx - pointer.sx) > 3) then pointer.drag = true end
+    if pointer.drag then game:setCamera(pointer.cam - (vy - pointer.sy), true) end
+  end
+end
+
+function love.mousereleased(x, y, button)
+  if not pointer.down or button ~= pointer.button then return end
+  local wasDrag, mode = pointer.drag, pointer.mode
+  pointer.down, pointer.drag, pointer.mode = false, false, nil
+  if fatalError or not game then return end
+  if button == 1 and not wasDrag and mode ~= "minimap" then
+    local vx, vy = toVirtual(x, y)
+    protect(game.click, game, vx, vy)
+  end
+end
+
+function love.wheelmoved(_, y)
+  if fatalError or not game or game.paused then return end
+  game:setCamera(game.camTarget - y * 30)
 end
 
 function love.keypressed(key)
   if key == "f11" then
-    love.window.setFullscreen(not love.window.getFullscreen())
+    protect(toggleFullscreen)
     return
   end
-  if fatalError or not game then
+  if fatalError then
     if key == "escape" then love.event.quit() end
     return
   end
-  if key == "escape" then
-    if not game:cancelHand() then love.event.quit() end
-  elseif key == "space" or key == "return" then
-    game:startWave()
-  elseif key == "r" and game.state == "over" and game.overClock > 0.7 then
-    game:reset()
-  end
+  if game then protect(game.key, game, key) end
 end
 
 function love.quit()
-  for i = #Assets.owned, 1, -1 do
-    local resource = Assets.owned[i]
-    if resource and resource.release then pcall(resource.release, resource) end
-    Assets.owned[i] = nil
+  if game and not fatalError then
+    pcall(game.saveRun, game)
+    pcall(game.saveMetaNow, game)
+  elseif meta then
+    pcall(writeSave, SAVE_META, serializeMeta(meta))
   end
-  if canvas then
-    pcall(canvas.release, canvas)
-    canvas = nil
-  end
+  releaseResources()
   return false
 end
